@@ -32,3 +32,12 @@ def convert_rtwb_to_pdtwb(r_twb):
         pd_sample["cloneId"] = np.arange(len(r_sample[j]))
         pd_twb = pd.concat([pd_twb, pd_sample], ignore_index=True)
     return pd_twb            
+
+
+def tryconvert(value, default, *types):
+    for t in types:
+        try:
+            return t(value)
+        except (ValueError, TypeError):
+            continue
+    return default
