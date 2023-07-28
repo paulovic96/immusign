@@ -1,5 +1,27 @@
 import numpy as np
 import pandas as pd
+import os
+import re
+
+def isnotebook():
+    try:
+        shell = get_ipython().__class__.__name__
+        if shell == 'ZMQInteractiveShell':
+            return True   # Jupyter notebook or qtconsole
+        elif shell == 'TerminalInteractiveShell':
+            return False  # Terminal running IPython
+        else:
+            return False  # Other type (?)
+    except NameError:
+        return False      # Probably standard Python interpreter
+
+if isnotebook():
+    from tqdm.notebook import tqdm
+else:
+    from tqdm import tqdm
+
+
+
 
 nucleotid_encoding = {"A": [1,0,0,0], "C" : [0,1,0,0], "G" : [0,0,1,0], "T" : [0,0,0,1]}
 armino_encoding = {"A": [1,0,0,0], "C" : [0,1,0,0], "G" : [0,0,1,0], "T" : [0,0,0,1]}
@@ -19,6 +41,15 @@ def one_hot_from_label(array):
     one_hot_labels = np.zeros((len(array_starting_zero),max_in_array - min_in_array))
     one_hot_labels = one_hot_labels[np.arange(len(one_hot_labels)), array_starting_zero] = 1
     return one_hot_labels
+
+def read_clones_txt(files, clones_txt_dict):
+    df_raw = []
+    for file in tqdm(files):
+        df_file = pd.read_csv(os.path.join(clones_txt_dict, file), sep="\t")
+        df_file["clones.txt.name"] = file
+        df_raw.append(df_file)
+    df_raw = pd.concat(df_raw)
+    return df_raw
 
 
 def convert_rtwb_to_pdtwb(r_twb):
@@ -41,6 +72,28 @@ def tryconvert(value, default, *types):
         except (ValueError, TypeError):
             continue
     return default
+
+
+def get_stripped_pat_no(id_string):
+    if pd.isna(id_string):
+        return None
+    elif len(id_string.split("-")) == 2:
+        numbers = id_string.split("-")
+        stripped_pat_number = "-".join([str(int(numbers[0])), str(int(numbers[1]))])
+    else:   #file  
+        numbers = re.findall(r'(?<=-)\d+',id_string)
+        valid_pat_numbers = [len(i) >= 2 for i in numbers]
+        pat_number = np.asarray(numbers)[valid_pat_numbers]
+        stripped_pat_number = "-".join([str(int(pat_number[0])), str(int(pat_number[1]))])
+    return stripped_pat_number
+
+def get_top_n_clones(df, top_n_clones, sample_id = "clones.txt.name", cloneId = "cloneId"):
+    df_sorted = df.sort_values(by=["clones.txt.name","cloneId"])
+    if top_n_clones == "all":
+        df_top_n = df_sorted
+    else:
+        df_top_n = df_sorted.groupby(sample_id).head(top_n_clones)
+    return df_top_n
 
 
 def grouped_patientwise_k_folds(df, group_id, patient_id, n_folds=5, random_state = 42):
