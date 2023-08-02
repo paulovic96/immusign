@@ -195,3 +195,69 @@ def get_averaged_classification_report(classification_report_dicts, output_dict 
     
     return report
 
+
+def from_dosc_and_dob_to_age(dob, dosc):
+    if pd.isnull(dob) or pd.isnull(dosc):
+        return None
+    else:
+        dosc = str(dosc).split(",")[-1]
+        dob = str(dob).split(",")[-1]
+        if len(dosc) == 2:
+            if int(dosc) > 20:
+                dosc = "19" + dosc
+            else:
+                dosc = "20" + dosc
+        else:
+            dosc = dosc[-4:]
+        
+        if len(dob) == 2:
+            if int(dob) > 20:
+                dob = "19" + dob
+            else:
+                dob = "20" + dob
+        else:
+            dob = dob[-4:]
+
+        age = int(dosc) - int(dob)
+        if age < 0:
+            age = None
+        return age      
+    
+
+def get_top_n_features_wide(df, fixed_feature_list, clone_feature_list, top_n_clones, keep_remaining_columns, file_id = "clones.txt.name", clone_id = "cloneId"):
+    df_wide = pd.DataFrame()
+    df = df.sort_values(by=[file_id, clone_id])
+
+    for i, key_group in enumerate(df.groupby(file_id)):
+        key = key_group[0]
+        group = key_group[1]
+        
+        for col in list(df.columns):
+            if col == clone_id:
+                continue
+            elif col == file_id:
+                df_wide.loc[i, file_id] = key
+            else:
+                if col in fixed_feature_list:
+                    df_wide.loc[i, col] = group[col].iloc[0]
+                elif col in clone_feature_list:
+                    top_n_clone_features = list(group[col])
+                    for j in range(top_n_clones):
+                        if j < len(top_n_clone_features):
+                            df_wide.loc[i,col +"_%d" % (j+1)] = top_n_clone_features[j]
+                        else:
+                            df_wide.loc[i,col +"_%d" % (j+1)] = None
+                else:
+                    if keep_remaining_columns:
+                        df_wide[i, col] = group[col].iloc[0]
+    
+    return df_wide
+
+
+
+
+
+
+
+
+    
