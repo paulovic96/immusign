@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import os
 import re
+import random
 
 def isnotebook():
     try:
@@ -29,6 +30,8 @@ armino_encoding = {"A": [1,0,0,0], "C" : [0,1,0,0], "G" : [0,0,1,0], "T" : [0,0,
 amino_acids = ['R', 'H', 'K', 'D', 'E', 'S', 'T', 'N', 'Q', 'C',
                     'G', 'P', 'A', 'V', 'I', 'L', 'M', 'F', 'Y', 'W']
 
+nSeq_look_up_dict = {"A": [1,0,0,0], "C" : [0,1,0,0], "G" : [0,0,1,0], "T" : [0,0,0,1]}
+
 def normalize_values(array_to_norm):
     stds = np.std(array_to_norm)
     means = np.mean(array_to_norm)
@@ -41,6 +44,9 @@ def one_hot_from_label(array):
     one_hot_labels = np.zeros((len(array_starting_zero),max_in_array - min_in_array))
     one_hot_labels = one_hot_labels[np.arange(len(one_hot_labels)), array_starting_zero] = 1
     return one_hot_labels
+
+def encode_nucleotides(nSeq):
+    return np.stack(list(map(lambda x: nSeq_look_up_dict[x], nSeq)))
 
 def read_clones_txt(files, clones_txt_dict):
     df_raw = []
@@ -254,6 +260,61 @@ def get_top_n_features_wide(df, fixed_feature_list, clone_feature_list, top_n_cl
     return df_wide
 
 
+
+def apply_padding(xx, max_len, style="zero"):
+    if len(xx.shape)>=1:
+        seq_length = xx.shape[0]
+    else:
+        seq_length = 1
+    padding_size = max_len - seq_length
+    if style == "same":
+        padding_size = tuple([padding_size] + [1 for i in range(len(xx.shape) - 1)])
+        xx = np.concatenate((xx, np.tile(xx[-1:], padding_size)), axis=0)
+    elif style == "zero":
+        padding_size = tuple([padding_size] + list(xx.shape[1:]))
+        xx = np.concatenate((xx, np.zeros(padding_size)), axis=0)
+    else:
+        raise ValueError("unkown padding style: %s" % style) 
+    return xx
+
+
+def pad_batch_online(batch_lens, batch_data, style="zero"):
+    max_len = int(max(batch_lens))
+    padded_data = np.stack(list(batch_data.apply(
+        lambda x: apply_padding(x, max_len, style=style))))
+    return padded_data
+
+
+SEED = 42
+random.seed(SEED)
+
+def set_random_seed(seed=42):
+    SEED = seed
+    random.seed(SEED)
+
+
+def create_epoch_with_same_size_batching(length_with_index_dict,batch_size, shuffle=True):
+    epoch = [] # list of batches
+    foundlings = []  # rest samples for each length which do not fit into one batch
+    
+    for length in np.sort(list(length_with_index_dict.keys())): # iterate over each unique length in training data
+        length_idxs = length_with_index_dict[length] # dictionary containing indices of samples with length
+        rest = len(length_idxs) % batch_size
+        if shuffle:
+            random.shuffle(length_idxs) # shuffle indices
+        epoch += [length_idxs[i * batch_size:(i * batch_size) + batch_size] for i in
+                  range(int(len(length_idxs) / batch_size))] # cut into batches and append to epoch
+        if rest > 0:
+            foundlings += list(length_idxs[-rest:]) # remaining indices which do not fit into one batch are stored in foundling
+    foundlings = np.asarray(foundlings)
+    rest = len(foundlings) % batch_size
+    epoch += [foundlings[i * batch_size:(i * batch_size) + batch_size] for i in
+              range(int(len(foundlings) / batch_size))] # cut foudnlings into batches (because inserted sorted this ensures minimal padding)
+    if rest > 0:
+        epoch += [foundlings[-rest:]] # put rest into one batch (allow smaller batch)
+    if shuffle:
+        random.shuffle(epoch)
+    return epoch
 
 
 
