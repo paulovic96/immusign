@@ -3,6 +3,8 @@ import pandas as pd
 import os
 import re
 import random
+from warnings import simplefilter
+simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
 
 def isnotebook():
     try:
@@ -93,12 +95,12 @@ def get_stripped_pat_no(id_string):
         stripped_pat_number = "-".join([str(int(pat_number[0])), str(int(pat_number[1]))])
     return stripped_pat_number
 
-def get_top_n_clones(df, top_n_clones, sample_id = "clones.txt.name", cloneId = "cloneId"):
-    df_sorted = df.sort_values(by=["clones.txt.name","cloneId"])
+def get_top_n_clones(df, top_n_clones, file_id, clone_id):
+    df_sorted = df.sort_values(by=[file_id, clone_id])
     if top_n_clones == "all":
         df_top_n = df_sorted
     else:
-        df_top_n = df_sorted.groupby(sample_id).head(top_n_clones)
+        df_top_n = df_sorted.groupby(file_id).head(top_n_clones)
     return df_top_n
 
 
@@ -206,8 +208,24 @@ def from_dosc_and_dob_to_age(dob, dosc):
     if pd.isnull(dob) or pd.isnull(dosc):
         return None
     else:
-        dosc = str(dosc).split(",")[-1]
-        dob = str(dob).split(",")[-1]
+        if "," in str(dosc):
+            dosc = str(dosc).split(",")[-1]
+        elif "." in str(dosc):
+            dosc = str(dosc).split(".")[-1]
+        elif "/" in str(dosc):
+            dosc = str(dosc).split("/")[-1]
+        else:
+            dosc = str(dosc)[-4:]
+        
+        if "," in str(dob):
+            dob = str(dob).split(",")[-1]
+        elif "." in str(dob):
+            dob = str(dob).split(".")[-1]
+        elif "/" in str(dob):
+            dob = str(dob).split("/")[-1]
+        else:
+            dob = str(dob)[-4:]
+        
         if len(dosc) == 2:
             if int(dosc) > 20:
                 dosc = "19" + dosc
@@ -230,9 +248,11 @@ def from_dosc_and_dob_to_age(dob, dosc):
         return age      
     
 
-def get_top_n_features_wide(df, fixed_feature_list, clone_feature_list, top_n_clones, keep_remaining_columns, file_id = "clones.txt.name", clone_id = "cloneId"):
+def get_top_n_features_wide(df, fixed_feature_list, clone_feature_list, top_n_clones, file_id, clone_id, keep_remaining_columns=False):
     df_wide = pd.DataFrame()
     df = df.sort_values(by=[file_id, clone_id])
+
+    clone_feature_list_wide = []
 
     for i, key_group in enumerate(df.groupby(file_id)):
         key = key_group[0]
@@ -249,15 +269,18 @@ def get_top_n_features_wide(df, fixed_feature_list, clone_feature_list, top_n_cl
                 elif col in clone_feature_list:
                     top_n_clone_features = list(group[col])
                     for j in range(top_n_clones):
+                        new_column = col +"_%d" % (j+1)
                         if j < len(top_n_clone_features):
-                            df_wide.loc[i,col +"_%d" % (j+1)] = top_n_clone_features[j]
+                            df_wide.loc[i,new_column] = top_n_clone_features[j]
                         else:
-                            df_wide.loc[i,col +"_%d" % (j+1)] = None
+                            df_wide.loc[i,new_column] = None
+                        
+                        clone_feature_list_wide.append(new_column)
                 else:
                     if keep_remaining_columns:
                         df_wide[i, col] = group[col].iloc[0]
     
-    return df_wide
+    return df_wide, clone_feature_list_wide
 
 
 
@@ -318,7 +341,113 @@ def create_epoch_with_same_size_batching(length_with_index_dict,batch_size, shuf
 
 
 
+def create_feature_df(df, target_column, 
+                      categorical_features, 
+                      numerical_features, 
+                      top_n_clones, 
+                      file_id,
+                      clone_id,
+                      features_to_encode_wide=None,
+                      wide_format =False, 
+                      keep_remaining_columns=False,
+                      ):
 
+    if wide_format:
+        assert not (features_to_encode_wide is None) and len(features_to_encode_wide) > 0, "Variable features_to_encode_wide undefined!\nYou have to specify the features which should be encoded in wide format..."
+        
+        fixed_feature_list = [target_column] + list(np.setdiff1d(categorical_features,features_to_encode_wide)) +  list(np.setdiff1d(numerical_features, features_to_encode_wide))
+            
+        X, feature_encoded_wide = get_top_n_features_wide(df, fixed_feature_list, features_to_encode_wide, top_n_clones, file_id, clone_id, keep_remaining_columns)
 
+        for column in feature_encoded_wide:
+            if X[column].dtype == float:
+                if np.sum(X[column].isnull()):
+                    X[column] = X[column].fillna(0)
+            elif X[column].dtype == object:
+                if type(X[column].loc[X[column].first_valid_index()]) == bool:
+                    if np.sum(X[column].isnull()):
+                        X[column] = X[column].fillna(False)
+                elif type(X[column].loc[X[column].first_valid_index()]) == str:
+                    if np.sum(X[column].isnull()):
+                        X[column] = X[column].fillna("nan")
+    else:
+        feature_list = [file_id, clone_id, target_column] + categorical_features + numerical_features
+        
+        X = get_top_n_clones(df[feature_list], top_n_clones, file_id, clone_id)
 
+    print("Created DataFrame with Features")
+    for column in X.columns:
+        print(column + " :", "%.2f %% NAN" % (X[column].isnull().sum()/len(X)*100), X[column].dtype)
     
+    return X
+
+def custom_combiner(feature, category):
+    return str(feature) + "_" + str(category)
+
+from sklearn.preprocessing import OneHotEncoder, StandardScaler, LabelEncoder
+
+def encode_target_for_classification(X, target_column):
+    X_new = X.copy()
+    target_preprocessor = LabelEncoder()
+    Y_target = target_preprocessor.fit_transform(X[target_column])
+
+    labels = []
+    for i in range(len(X_new[target_column].unique())):
+        labels.append(np.asarray(X[target_column])[Y_target==i][0])
+
+    X_new.insert(loc=0, column = target_column + "_encoded", value=Y_target)
+    return X_new, labels 
+
+
+def encode_categorical_features_for_classification(X, 
+                      categorical_features, 
+                      top_n_clones,
+                      features_to_encode_wide=None, 
+                      wide_format=False 
+                      ):
+    X_new = X.copy() 
+    categorical_preprocessor = OneHotEncoder(handle_unknown = 'ignore',feature_name_combiner=custom_combiner, sparse_output=False)
+
+    if wide_format: 
+        assert not (features_to_encode_wide is None) and len(features_to_encode_wide) > 0, "Variable features_to_encode_wide undefined!\nYou have to specify the features which are encoded in wide format..."
+        wide_categorical_columns = list(np.intersect1d(features_to_encode_wide, categorical_features))      
+        categorical_features =  list(np.setdiff1d(categorical_features,features_to_encode_wide))
+        
+        for feature in wide_categorical_columns:
+            categorical_features += [feature + "_%d" % (i+1) for i in range(top_n_clones)]
+
+
+    transformed_categories = categorical_preprocessor.fit_transform(X_new[categorical_features])
+    transformed_categories = pd.DataFrame(data = transformed_categories, columns=categorical_preprocessor.get_feature_names_out())
+
+    X_new = pd.concat([X_new.reset_index(drop=True), transformed_categories], axis=1) 
+
+    return X_new, categorical_preprocessor.get_feature_names_out()
+
+def scale_numerical_features(X, 
+                      numerical_features, 
+                      top_n_clones,
+                      fit_transform,
+                      features_to_encode_wide = None, 
+                      wide_format=False,
+                      numerical_preprocessor = None 
+                      ):
+
+    X_new = X.copy()
+    if pd.isnull(numerical_preprocessor):
+        numerical_preprocessor = StandardScaler()
+
+    if wide_format:
+        assert not (features_to_encode_wide is None) and len(features_to_encode_wide) > 0, "Variable features_to_encode_wide undefined!\nYou have to specify the features which are encoded in wide format..."
+        wide_numerical_columns = list(np.intersect1d(features_to_encode_wide, numerical_features))      
+        numerical_features =  list(np.setdiff1d(numerical_features, features_to_encode_wide))
+        
+        for feature in wide_numerical_columns:
+            numerical_features += [feature + "_%d" % (i+1) for i in range(top_n_clones)]
+
+    if fit_transform:
+        X_new.loc[:, numerical_features] = numerical_preprocessor.fit_transform(X_new.loc[:, numerical_features])
+    else:
+        X_new.loc[:, numerical_features] = numerical_preprocessor.transform(X_new.loc[:, numerical_features])
+
+    return X_new, numerical_features, numerical_preprocessor
