@@ -4,6 +4,7 @@ import os
 import re
 import random
 import skbio
+import peptides 
 from warnings import simplefilter
 simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
 
@@ -51,15 +52,93 @@ def one_hot_from_label(array):
 def encode_nucleotides(nSeq):
     return np.stack(list(map(lambda x: nSeq_look_up_dict[x], nSeq)))
 
-def read_clones_txt(files, clones_txt_dict):
+def get_clonset_info(rep, method, quant="proportion"):
+    """
+    chao1:  Non-parametric estimation of the number of classes in a population: Sest = Sobs + ((F2 / 2G + 1) - (FG / 2 (G + 1) 2))
+            Sets = number classes
+            Sobs = number classes observed in sample
+            F = number singeltons (only one individual in class)
+            G = number doubletons (exactly two individuals in class)
+
+    gini index:  'inequality' among clonotypes. 0 for qual distribution and 1 for total unequal dstirbution only 1 clone in set
+    
+    simpson: Probability  that two random clones belong to the same clone type
+
+    inv_simpson: 1 / simpson
+
+    shannon:  Distribution of clones within a repertoire. Quotient between Shannon-Index and max Shannon-Index (all clones equal distributed) is called Evenness. 
+
+    clonality: 1-evenness. 1 being a repertoire consisting of only one clone and 0 being a repertoire of maximal evennes (every clone in the repertoire was present at the same frequency).
+    """
+
+
+    n_aa_clones = len(rep["aaSeqCDR3"].unique())
+    if quant == "count":
+        counts = np.asarray(rep["cloneCount"])
+    elif quant == "proportion":
+        counts = np.asarray(rep["cloneFraction"])
+
+    if method == "chao1":
+        info = skbio.diversity.alpha.chao1(counts, bias_corrected=True)
+    elif method == "gini":
+        info = skbio.diversity.alpha.gini_index(counts, method='rectangles')
+    elif method == "simpson":
+        info = skbio.diversity.alpha.simpson(counts)
+    elif method == "inv_simpson":
+        info = skbio.diversity.alpha.enspie(counts)
+    elif method == "shannon":
+        info = skbio.diversity.alpha.shannon(counts, base=2)
+    elif method == "clonality":
+        hmax = np.log2(n_aa_clones)
+        shannon = skbio.diversity.alpha.shannon(counts, base=2)
+        eveness = shannon/hmax
+        info = 1-eveness
+    
+    return info
+
+def read_clones_txt(files, clones_txt_dict=None):
+    """
+    KF1: Helix/bend preference,
+    KF2: Side-chain size,
+    KF3: Extended structure preference,
+    KF4: Hydrophobicity,
+    KF5: Double-bend preference,
+    KF6: Partial specific volume,
+    KF7: Flat extended preference,
+    KF8: Occurrence in alpha region,
+    KF9: pK-C,
+    KF10: Surrounding hydrophobicity
+    """
     df_raw = []
     for file in tqdm(files):
-        df_file = pd.read_csv(os.path.join(clones_txt_dict, file), sep="\t")
-        df_file["clones.txt.name"] = file
+        if not clones_txt_dict == None:
+            file = os.path.join(clones_txt_dict, file)          
+        df_file = pd.read_csv(file, sep="\t")
+        df_file["clones.txt.name"] = os.path.basename(file)
+        df_file["cloneFraction"] = df_file["cloneFraction"].apply(lambda x: float(x.replace(",",".").replace("+","-")) if isinstance(x, str) else float(x))
+        df_file["clonality"] = get_clonset_info(df_file, "clonality")
+        df_file["shannon"] = get_clonset_info(df_file, "shannon")
+        df_file["inv_simpson"] = get_clonset_info(df_file, "inv_simpson")
+        df_file["simpson"] = get_clonset_info(df_file, "simpson")
+        df_file["gini"] = get_clonset_info(df_file, "gini")
+        df_file["chao1"] = get_clonset_info(df_file, "chao1")
+
+        df_file[['KF1', 'KF2', 'KF3', 'KF4', 'KF5',
+                'KF6', 'KF7', 'KF8', 'KF9', 'KF10']] = df_file.aaSeqCDR3.apply(lambda x: list(peptides.Peptide(x).kidera_factors())).to_list()
+
         df_raw.append(df_file)
     df_raw = pd.concat(df_raw)
     return df_raw
 
+def load_clone_files_data(project_path):
+    clone_files = []
+    for path, subdirs, files in os.walk(project_path):
+        for name in files:
+            file = os.path.join(path, name)
+            if file.endswith("clones.txt"):
+                clone_files.append(file)
+    df = read_clones_txt(clone_files)
+    return df
 
 def convert_rtwb_to_pdtwb(r_twb):
     pd_twb = pd.DataFrame()
@@ -143,18 +222,22 @@ def get_averaged_classification_report(classification_report_dicts, output_dict 
     averaged_classification_report = classification_report_dicts[0]
     
     for group in averaged_classification_report.keys():
-        if type(averaged_classification_report[group]) == float:
+        if isinstance(averaged_classification_report[group], (np.floating, float)):
             for report in classification_report_dicts[1:]:
                 averaged_classification_report[group] += report[group]
-        elif type(averaged_classification_report[group]) == dict:
+        elif isinstance(averaged_classification_report[group], dict):
             for metric in averaged_classification_report[group].keys():
                 for report in classification_report_dicts[1:]:
-                    averaged_classification_report[group][metric] += report[group][metric]
+                    try:
+                        averaged_classification_report[group][metric] += report[group][metric]
+                    except KeyError:
+                        print(group, " not found in validation fold...")
+
         else:
             raise ValueError("unkown format in classification report")
     
     for group in averaged_classification_report.keys():
-        if type(averaged_classification_report[group]) == float:
+        if isinstance(averaged_classification_report[group], (np.floating, float)):
             averaged_classification_report[group] /= len(classification_report_dicts)
         else:
             for metric in averaged_classification_report[group].keys():
@@ -174,10 +257,14 @@ def get_averaged_classification_report(classification_report_dicts, output_dict 
 
         rows = []
         avg = []
+        mcc = []
+        
         summed_support = 0
         for k, v in averaged_classification_report.items():
             if "accuracy" in k:
                 avg.append(v)
+            elif "mcc" in k:
+                mcc.append(v)
             else:
                 row = [k] + list(v.values())
                 if "avg" in k:  
@@ -186,6 +273,7 @@ def get_averaged_classification_report(classification_report_dicts, output_dict 
                     rows.append(row)
                     summed_support += row[-1]
         avg.append(summed_support)
+        mcc.append(summed_support)
             
 
         for row in rows[:-2]:
@@ -199,6 +287,8 @@ def get_averaged_classification_report(classification_report_dicts, output_dict 
                     + " {:>9.{digits}f}\n"
                 )
         report += row_fmt_accuracy.format("accuracy", "", "", *avg, width=width, digits=digits)
+        report += row_fmt_accuracy.format("mcc", "", "", *mcc, width=width, digits=digits)
+        
         for row in rows[-2:]:
             report += row_fmt.format(*row, width=width, digits=digits)
     
@@ -452,63 +542,3 @@ def scale_numerical_features(X,
         X_new.loc[:, numerical_features] = numerical_preprocessor.transform(X_new.loc[:, numerical_features])
 
     return X_new, numerical_features, numerical_preprocessor
-
-
-def get_clonset_info(rep, method, quant):
-    """
-    chao1:  Non-parametric estimation of the number of classes in a population: Sest = Sobs + ((F2 / 2G + 1) - (FG / 2 (G + 1) 2))
-            Sets = number classes
-            Sobs = number classes observed in sample
-            F = number singeltons (only one individual in class)
-            G = number doubletons (exactly two individuals in class)
-
-    gini index:  'inequality' among clonotypes. 0 for qual distribution and 1 for total unequal dstirbution only 1 clone in set
-    
-    simpson: Probability  that two random clones belong to the same clone type
-
-    inv_simpson: 1 / simpson
-
-    shannon:  Distribution of clones within a repertoire. Quotient between Shannon-Index and max Shannon-Index (all clones equal distributed) is called Evenness. 
-
-    clonality: 1-evenness. 1 being a repertoire consisting of only one clone and 0 being a repertoire of maximal evennes (every clone in the repertoire was present at the same frequency).
-    """
-
-
-    n_aa_clones = len(rep["aaSeqCDR3"].unique())
-    if quant == "count":
-        counts = np.asarray(rep["cloneCount"])
-    elif quant == "proportion":
-        counts = np.asarray(rep["cloneFraction"])
-
-    if method == "chao1":
-        info = skbio.diversity.alpha.chao1(counts, bias_corrected=True)
-    elif method == "gini":
-        info = skbio.diversity.alpha.gini_index(counts, method='rectangles')
-    elif method == "simpson":
-        info = skbio.diversity.alpha.simpson(counts)
-    elif method == "inv_simpson":
-        info = skbio.diversity.alpha.enspie(counts)
-    elif method == "shannon":
-        info = skbio.diversity.alpha.shannon(counts, base=2)
-    elif method == "clonality":
-        hmax = np.log2(n_aa_clones)
-        shannon = skbio.diversity.alpha.shannon(counts, base=2)
-        eveness = shannon/hmax
-        info = 1-eveness
-    
-    return info
-
-
-
-"""
-KF1: Helix/bend preference,
-KF2: Side-chain size,
-KF3: Extended structure preference,
-KF4: Hydrophobicity,
-KF5: Double-bend preference,
-KF6: Partial specific volume,
-KF7: Flat extended preference,
-KF8: Occurrence in alpha region,
-KF9: pK-C,
-KF10: Surrounding hydrophobicity
-"""
