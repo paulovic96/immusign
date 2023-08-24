@@ -542,3 +542,14 @@ def scale_numerical_features(X,
         X_new.loc[:, numerical_features] = numerical_preprocessor.transform(X_new.loc[:, numerical_features])
 
     return X_new, numerical_features, numerical_preprocessor
+
+
+def txt_to_fasta(input_file, output_file):
+    with open(input_file, 'r') as txt_file, open(output_file, 'w') as fasta_file:
+        lines = txt_file.read().splitlines()
+        
+        for i,line in enumerate(lines):
+            header = "Sequence_%d" % i
+            aa_seq = line
+            fasta_string = f">{header}\n{aa_seq}\n"
+            fasta_file.write(fasta_string)
