@@ -11,6 +11,7 @@ import json
 from tqdm import tqdm
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
 import xgboost as xgb
 from catboost import CatBoostClassifier
 import lightgbm
@@ -20,6 +21,7 @@ np.random.seed(42)
 random.seed(42)
 
 import skbio
+
 
 contaminated_hds = ['105-D28-Ig-gDNA-PB-Nuray-A250_S180.clones.txt',
  '108-D0-Ig-gDNA-PB-Nuray-A250_S185.clones.txt',
@@ -86,7 +88,7 @@ def create_vdj_index(class_files, family = False):
     for i, type in enumerate(class_files.keys()):
         for j, file in enumerate(class_files[type]):
         
-            df = pd.read_csv("../data/clones_mit_kidera/%s" % file, sep="\t")
+            df = pd.read_csv("immusign/data/clones_mit_kidera/%s" % file, sep="\t")
                 
             bestvgene.extend(df["bestVGene"].unique())
             bestdgene.extend(df["bestDGene"].unique())
@@ -146,10 +148,10 @@ def create_vdj_index(class_files, family = False):
                 gene2index[gene] = list(uniqejgenefamilies).index(str(bestjgene_short[i]))
     # save to json file
     if family:
-        with open("../data/gene2index_family.json", "w") as outfile:
+        with open("immusign/data/gene2index_family.json", "w") as outfile:
             json.dump(gene2index, outfile)
     else:
-        with open("../data/gene2index.json", "w") as outfile:
+        with open("immusign/data/gene2index.json", "w") as outfile:
             json.dump(gene2index, outfile)
     print(gene2index)
 
@@ -168,7 +170,7 @@ def read_feature(files, features , n_entries, flatten=True):
     cloneFraction = []
 
     for i, file in enumerate(files):
-        df = pd.read_csv("../data/clones_mit_kidera/%s" %file, sep="\t")
+        df = pd.read_csv("immusign/data/clones_mit_kidera/%s" %file, sep="\t")
         df = df[df['cloneFraction'].apply(lambda x: isinstance(x, (int, float)))] 
         if (df.shape[0] == 0):
             continue
@@ -258,7 +260,7 @@ def create_features(class_files, feature_names, object_types, n_entries=5, oneho
         categorical_cols = X.columns[X.dtypes == 'category']
         if genefamily:
              # read gene2index mapping
-            with open("../data/gene2index.json", "r") as infile:
+            with open("immusign/data/gene2index.json", "r") as infile:
                 gene2index = json.load(infile)
                 for c in categorical_cols:
                      X[c] = X[c].apply(lambda x: gene2index[str(x)] if str(x) in gene2index else -1)
@@ -288,7 +290,7 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
 
     print("Start %s training..." %model_name)
     if store_path == None:
-        store_dir  = os.path.join("../outputs_%s" % model_name.replace(" ", ""), _run_name("classification") )
+        store_dir  = os.path.join("immusign/outputs_%s" % model_name.replace(" ", ""), _run_name("classification") )
     else:
         store_dir = os.path.join(store_path, "outputs_%s" % model_name.replace(" ", ""), _run_name("classification") )
 
@@ -308,6 +310,11 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
     selected_object_types = [feature_dict[feature] for feature in selected_features]
 
     X, y, clone_fractions = create_features(class_files, selected_features, selected_object_types, settings["n_clones"], onehot_encoding=settings["onehot_encoding"], ordinal_encoding=settings["ordinal_encoding"], standardize=settings["standardize"], genefamily=settings["genefamily"])
+    
+    if model_name == "CatBoost":
+        categorical_cols = X.columns[X.dtypes == 'category']
+        X[categorical_cols] = X[categorical_cols].astype('int64')
+
     X_test = X.iloc[test_index]
     y_test = y[test_index]
     clone_fractions_test = clone_fractions[test_index]
@@ -332,13 +339,15 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
         elif model_name == 'XGBoost':
             model = xgb.XGBClassifier(n_estimators=100, max_depth = settings["max_depth"], random_state=42)
         elif model_name == 'LightGBM':
-            model = lightgbm.LGBMClassifier(n_estimators=100, max_depth = settings["max_depth"], random_state=42, bagging_fraction=1.0, boost_from_average=False)
+            model = lightgbm.LGBMClassifier(n_estimators=100, max_depth = settings["max_depth"], random_state=42, bagging_fraction=1.0, boost_from_average=False, verbose=-1)
         elif model_name == "CatBoost":
-            model = CatBoostClassifier(n_estimators=100, max_depth = settings["max_depth"], random_state=42)
+            model = CatBoostClassifier(n_estimators=100, max_depth = settings["max_depth"], random_state=42, verbose=False)
         elif model_name == "TabPFN":
             raise NotImplementedError
         elif model_name == "Logistic Regression":
-            model = LogisticRegression(max_iter=500)
+            model = LogisticRegression(max_iter=settings["max_iter"])
+        elif model_name == "SVM":
+            model = SVC(max_iter=settings["max_iter"], kernel = settings["kernel"])
         return model
 
     for k, (train, val) in enumerate(k_fold.split(X, y)):
@@ -405,12 +414,29 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
     performance_df.to_csv(os.path.join(store_dir, "performance.csv"), index=False)
 
     with open(os.path.join(store_dir,'test_scores.txt'), 'w') as f:
+        digits = 2
+        width = len("weighted avg")
+        row_fmt_mcc = (
+                    "{:>{width}s} "
+                    + " {:>9.{digits}}" * 2
+                    + " {:>9.{digits}f}"
+                    + " {:>9.{digits}}\n"
+                )
         f.write("%s Test Scores\n" % model_name)
         f.write(classification_report(y_test, y_pred, target_names=np.asarray(types), zero_division=0))  
+        mcc = matthews_corrcoef(y_test, y_pred)
+        f.write(row_fmt_mcc.format("mcc", "", "", mcc, "", width=width, digits=digits))  
         f.write("\n\n") 
         f.write("Low dlbcl Scores\n")    
-        target_labels = np.unique(np.concatenate([y_test[low_mask], y_pred[low_mask]]))                      
-        f.write(classification_report(y_test[low_mask], y_pred[low_mask], target_names=np.asarray(types)[target_labels], zero_division=0))                         
+
+        if model_name == "CatBoost":
+            target_labels = np.unique(np.concatenate([y_test[low_mask], y_pred[low_mask].flatten()]).astype(int))                      
+        else:
+            target_labels = np.unique(np.concatenate([y_test[low_mask], y_pred[low_mask]]))               
+        f.write(classification_report(y_test[low_mask], y_pred[low_mask], target_names=np.asarray(types)[target_labels], zero_division=0))
+        mcc = matthews_corrcoef(y_test[low_mask], y_pred[low_mask])
+        f.write(row_fmt_mcc.format("mcc", "", "", mcc, "", width=width, digits=digits))         
+                        
     
 
 
@@ -418,12 +444,14 @@ def hyperopt_classical(iterations, model_name, selected_features, class_files, t
 
     distributions = dict(
                         n_splits= [3],
-                        standardize = [True],
-                        ordinal_encoding = [False],
-                        onehot_encoding = [True],
-                        max_depth=[3, 6, 8, 12],
+                        standardize = [False, True],
+                        ordinal_encoding = [False, True],
+                        onehot_encoding = [False, True],
+                        max_depth=[3, 6, 8, 16],
                         n_clones = [1, 3, 5, 10, 20, 50],
-                        genefamily = [False]
+                        genefamily = [False],
+                        max_iter = [100, 500, 1000, 5000],
+                        kernel = ['rbf', 'poly', 'sigmoid']
                         )
 
     for n in tqdm(range(iterations)):
@@ -431,6 +459,13 @@ def hyperopt_classical(iterations, model_name, selected_features, class_files, t
         for key in distributions:
             ind = int(np.random.randint(0, len(distributions[key])))
             tmp_setting[key] =distributions[key][ind]
+        if tmp_setting["ordinal_encoding"] == False:
+            if tmp_setting["genefamily"] == False:
+                if tmp_setting["onehot_encoding"] ==  False:
+                    print("Warning: onehot_encoding and ordinal_encoding set to False...")
+                    randomly_chosen = ["ordinal_encoding", "onehot_encoding"][np.random.randint(0, 2)]
+                    tmp_setting[randomly_chosen] = True
+                    print("Randomly set %s to true..." % randomly_chosen)
         main(model_name, tmp_setting, selected_features, class_files, train_index, test_index, types, store_path)
 
 def load_metadata(types, target_locus, path_dir):
@@ -499,34 +534,88 @@ def baseline(class_files, types, store_path = None):
     df_baseline = pd.concat([df_baseline_train, df_baseline_test])
 
     if store_path == None:
-        store_dir = os.path.join("../results_twoclass/outputs_Baseline")
+        store_dir = os.path.join("immusign/results_twoclass/outputs_Baseline")
     else:
         store_dir = os.path.join(store_path, "outputs_Baseline")
     os.makedirs(store_dir, exist_ok=True)
     df_baseline.to_csv(os.path.join(store_dir, "performance.csv"), index=False)
 
     with open(os.path.join(store_dir,'test_scores.txt'), 'w') as f:
+        digits = 2
+        width = len("weighted avg")
+        row_fmt_mcc = (
+                    "{:>{width}s} "
+                    + " {:>9.{digits}}" * 2
+                    + " {:>9.{digits}f}"
+                    + " {:>9.{digits}}\n"
+                )
+        
         f.write("Baseline Test Scores\n")
-        f.write(classification_report(y[test_index], y_baseline[test_index], target_names=np.asarray(types), zero_division=0))  
+        f.write(classification_report(y[test_index], y_baseline[test_index], target_names=np.asarray(types), zero_division=0))
+        mcc = matthews_corrcoef(y, y_baseline)
+        f.write(row_fmt_mcc.format("mcc", "", "", mcc, "", width=width, digits=digits)) 
         f.write("\n\n") 
+        
         f.write("Low dlbcl Scores\n")    
         target_labels = np.unique(np.concatenate([y[low_dlbcl_mask], y_baseline[low_dlbcl_mask]]))
-        f.write(classification_report(y[low_dlbcl_mask], y_baseline[low_dlbcl_mask], target_names=np.asarray(types)[target_labels], zero_division=0))                         
+        f.write(classification_report(y[low_dlbcl_mask], y_baseline[low_dlbcl_mask], target_names=np.asarray(types)[target_labels], zero_division=0))
+        mcc = matthews_corrcoef(y[low_dlbcl_mask], y_baseline[low_dlbcl_mask])
+        f.write(row_fmt_mcc.format("mcc", "","", mcc, "", width=width, digits=digits))
     
     return df_baseline, train_index, test_index
 
 
 if __name__ == '__main__':
-    path_dir = "../data/"
-    store_path = "../results_nlphl_dlbcl_hd/"
+    path_dir = "immusign/data/"
+    store_path = "immusign/results_nlphl_dlbcl_hd/"
+    comparisons = [['nlphl'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd']]
+    comparison_labels = ['nlphl', 'dlbcl', 'hd']
+
+    #'unspecified', 'dlbcl', 'nlphl', 'abc_dlbcl', 'thrlbcl', 'lymphadenitis', hd
     
-    class_files, number_of_repertoires = load_metadata([["nlphl"], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd']], "IGH", path_dir)
+    class_files, number_of_repertoires = load_metadata(comparisons, "IGH", path_dir)
     print(number_of_repertoires)
 
     selected_features = ['cloneFraction', 'lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)]
  
-    df_baseline, train_index, test_index = baseline(class_files, ['nlphl', 'dlbcl', 'hd'], store_path=store_path)
+    df_baseline, train_index, test_index = baseline(class_files, comparison_labels, store_path=store_path)
 
-    hyperopt_classical(10, "Logistic Regression", selected_features, class_files, train_index, test_index, ['nlphl', 'dlbcl', 'hd'], store_path=store_path)
+    #hyperopt_classical(10, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    #hyperopt_classical(10, "SVM", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    #hyperopt_classical(10, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    #hyperopt_classical(10, "LightGBM", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    #hyperopt_classical(10, "CatBoost", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
 
-   
+    score_to_choose_best = "mcc"
+    best_score_test = -np.inf
+    best_score_valid = -np.inf
+    best_model_test = ""
+    best_model_valid = ""
+    scores_txt_test = ""
+    scores_txt_valid = ""
+    for path, subdirs, files in os.walk(store_path):
+        for name in files:
+                file = os.path.join(path, name)
+                if file.endswith("performance.csv"):
+                    if "Baseline" in file:
+                        baseline_results = pd.read_csv(file)
+                    else:
+                        model_results = pd.read_csv(file)
+                        score_test = model_results[model_results["Dataset"] == "Test"][score_to_choose_best].iloc[0]
+                        score_valid = np.mean(model_results[model_results["Dataset"] == "Validation"][score_to_choose_best])
+                        if score_test > best_score_test:
+                            best_score_test = score_test
+                            best_model_test = os.path.join(os.path.basename(os.path.dirname(path)), os.path.basename(path)) 
+                            with open(os.path.join(path,"test_scores.txt")) as f:
+                                scores_txt_test = f.read()
+                        if score_valid > best_score_valid:
+                            best_score_valid = score_valid
+                            best_model_valid = os.path.join(os.path.basename(os.path.dirname(path)), os.path.basename(path)) 
+                            with open(os.path.join(path,"test_scores.txt")) as f:
+                                scores_txt_valid = f.read()
+    print("\n\n")
+    print("Best model Test: ", best_model_test)
+    print(scores_txt_test)
+    print("\n\n")
+    print("Best model Validation: ", best_model_valid)
+    print(scores_txt_valid)
