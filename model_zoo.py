@@ -6,18 +6,25 @@ class NonLinearModel(torch.nn.Module):
                  input_channel,
                  output_channel,
                  hidden_units,
+                 hidden_layers,
                  activation_function=torch.nn.LeakyReLU(),
                  global_average_pooling = True):
         
         super().__init__()
         self.activation_function = activation_function
-        self.non_linear = torch.nn.Linear(input_channel, hidden_units)
         self.linear = torch.nn.Linear(hidden_units, output_channel)
         self.global_average_pooling = global_average_pooling
+        self.non_linear_layers = torch.nn.ModuleList(
+            [torch.nn.Linear(input_channel, hidden_units)])
+        self.non_linear_layers = self.non_linear_layers.extend(torch.nn.ModuleList(
+            [torch.nn.Linear(hidden_units, hidden_units) for _ in range(hidden_layers - 1)]))
 
     def forward(self, x, *args):
-        output = self.non_linear(x)
-        output = self.activation_function(output)     
+        output = x
+        for i, block in enumerate(self.non_linear_layers):
+            output = block(output)
+            output = self.activation_function(output)   
+
         output = self.linear(output)
         if self.global_average_pooling and len(output.shape) == 3:
             output = output.mean([1])    
