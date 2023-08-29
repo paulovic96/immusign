@@ -33,7 +33,7 @@ def main():
     if args.o:
         EMBEDDINGS_PATH = args.o
     else:
-        EMBEDDINGS_PATH = "aa_cdr3_embeddings.npy" 
+        EMBEDDINGS_PATH = "aa_cdr3_embeddings.pkl" 
     if args.max_chunk_length:
         MAX_CHUNK_LENGTH = args.max_chunk_length
     else:
@@ -46,8 +46,11 @@ def main():
     if not os.path.exists(EMBEDDINGS_PATH):
         with open (AAS_PATH, "r") as file:
             aa_list = [line.strip().replace("_","-").replace("*", "X") for line in file] # ESM gap, deletion = "-" or ".", stop_codon = "X"
-
-        l, c = np.unique(pd.Series(aa_list).apply(len), return_counts=True)
+        aa_lengths = [len(aa) for aa in aa_list]
+        aa_list.sort(key=len) # sort by length()
+        aa_indices = np.argsort(aa_lengths)
+        
+        l, c = np.unique(aa_lengths, return_counts=True)
         len_endpoints = np.cumsum(c)    
 
 
@@ -81,7 +84,12 @@ def main():
             store_embeddings[i_start:i_end,:] = embedding.to("cpu")
             i_start = i_end
 
-        np.save(EMBEDDINGS_PATH, store_embeddings)
+        df_embed = pd.DataFrame()
+        df_embed["aa_cdr3"] = np.asarray(aa_list)[aa_indices]
+        df_embed["esm_embedding"] = list(store_embeddings[aa_indices,:])
+        df_embed.to_pickle(EMBEDDINGS_PATH)
+
+        #np.save(EMBEDDINGS_PATH, store_embeddings)
     
     else:
         print("Already existing Embedding: ",EMBEDDINGS_PATH)
