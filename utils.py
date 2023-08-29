@@ -41,12 +41,18 @@ def normalize_values(array_to_norm):
     means = np.mean(array_to_norm)
     return (array_to_norm - means) / stds
 
-def one_hot_from_label(array):
-    max_in_array = np.amax(array)
-    min_in_array = np.amin(array)
-    array_starting_zero = array - min_in_array #starting from zero
-    one_hot_labels = np.zeros((len(array_starting_zero),max_in_array - min_in_array))
-    one_hot_labels = one_hot_labels[np.arange(len(one_hot_labels)), array_starting_zero] = 1
+def one_hot_from_label(array, n_classes=None):
+    
+    if n_classes:
+        one_hot_labels = np.zeros((len(array),n_classes))
+
+    else:
+        max_in_array = np.amax(array)
+        min_in_array = np.amin(array)
+        array = array - min_in_array #starting from zero
+        one_hot_labels = np.zeros((len(array_starting_zero),(max_in_array - min_in_array)+1))
+    
+    one_hot_labels[np.arange(len(one_hot_labels)), array] = 1
     return one_hot_labels
 
 def encode_nucleotides(nSeq):
