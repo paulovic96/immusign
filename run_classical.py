@@ -42,7 +42,7 @@ def get_clonset_info(rep, method, quant="proportion"):
             F = number singeltons (only one individual in class)
             G = number doubletons (exactly two individuals in class)
 
-    gini index:  'inequality' among clonotypes. 0 for qual distribution and 1 for total unequal dstirbution only 1 clone in set
+    gini index:  'inequality' among clonotypes. 0 for equal distribution and 1 for total unequal dstribution only 1 clone in set
     
     simpson: Probability  that two random clones belong to the same clone type
 
@@ -75,6 +75,8 @@ def get_clonset_info(rep, method, quant="proportion"):
         shannon = skbio.diversity.alpha.shannon(counts, base=2)
         eveness = shannon/hmax
         info = 1-eveness
+        if np.isnan(info) or np.isinf(info):
+            info = 1
 
     
     return info
@@ -335,13 +337,13 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
     
     def get_model(model_name, settings):
         if model_name == 'Random Forest':
-            model = RandomForestClassifier(n_estimators=100, max_depth = settings["max_depth"], random_state=42)
+            model = RandomForestClassifier(n_estimators=settings["n_estimators"], max_depth = settings["max_depth"], random_state=42)
         elif model_name == 'XGBoost':
-            model = xgb.XGBClassifier(n_estimators=100, max_depth = settings["max_depth"], random_state=42)
+            model = xgb.XGBClassifier(n_estimators=settings["n_estimators"], max_depth = settings["max_depth"], random_state=42)
         elif model_name == 'LightGBM':
-            model = lightgbm.LGBMClassifier(n_estimators=100, max_depth = settings["max_depth"], random_state=42, bagging_fraction=1.0, boost_from_average=False, verbose=-1)
+            model = lightgbm.LGBMClassifier(n_estimators=settings["n_estimators"], max_depth = settings["max_depth"], random_state=42, bagging_fraction=1.0, boost_from_average=False, verbose=-1)
         elif model_name == "CatBoost":
-            model = CatBoostClassifier(n_estimators=100, max_depth = settings["max_depth"], random_state=42, verbose=False)
+            model = CatBoostClassifier(n_estimators=settings["n_estimators"], max_depth = settings["max_depth"], random_state=42, verbose=False)
         elif model_name == "TabPFN":
             raise NotImplementedError
         elif model_name == "Logistic Regression":
@@ -363,8 +365,8 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
 
         # Measure the performance of the model using the metrics
         accuracies.append(accuracy_score(y_val, y_pred))
-        recalls.append(recall_score(y_val, y_pred, average='binary' if len(np.unique(y)) == 2 else 'weighted'))
-        precisions.append(precision_score(y_val, y_pred, average='binary' if len(np.unique(y)) == 2 else 'weighted'))
+        recalls.append(recall_score(y_val, y_pred, average='binary' if len(np.unique(y)) == 2 else 'weighted', zero_division=0.0))
+        precisions.append(precision_score(y_val, y_pred, average='binary' if len(np.unique(y)) == 2 else 'weighted', zero_division=0.0))
         roc_aucs.append(roc_auc_score(y_val, y_pred) if len(np.unique(y)) == 2 else np.nan)
         mccs.append(matthews_corrcoef(y_val, y_pred))
 
@@ -374,8 +376,8 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
             masked_dlbcl_accuracies.append([np.nan, np.nan, np.nan])
         else:
             masked_dlbcl_accuracies.append([accuracy_score(y_val[low_mask],y_pred[low_mask] ), 
-                                precision_score(y_val[low_mask],y_pred[low_mask] , average='binary' if len(np.unique(y)) == 2 else 'weighted'), 
-                                recall_score(y_val[low_mask],y_pred[low_mask], average='binary' if len(np.unique(y)) == 2 else 'weighted' )])
+                                precision_score(y_val[low_mask],y_pred[low_mask] , average='binary' if len(np.unique(y)) == 2 else 'weighted', zero_division=0.0), 
+                                recall_score(y_val[low_mask],y_pred[low_mask], average='binary' if len(np.unique(y)) == 2 else 'weighted', zero_division=0.0)])
 
 
     performance_df = pd.DataFrame({'accuracy': accuracies, 'recall': recalls, 'precision': precisions, 'roc_auc': roc_aucs, 'mcc' : mccs})
@@ -394,7 +396,7 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
     model.fit(X, y)
 
     y_pred = model.predict(X_test)
-    performance_df_test = pd.DataFrame({'accuracy': [accuracy_score(y_test, y_pred)], 'recall': [recall_score(y_test, y_pred, average='binary' if len(np.unique(y)) == 2 else 'weighted')], 'precision': [precision_score(y_test, y_pred, average='binary' if len(np.unique(y)) == 2 else 'weighted')], 'roc_auc': [roc_auc_score(y_test, y_pred) if len(np.unique(y)) == 2 else np.nan], 'mcc' : [matthews_corrcoef(y_test, y_pred)]})
+    performance_df_test = pd.DataFrame({'accuracy': [accuracy_score(y_test, y_pred)], 'recall': [recall_score(y_test, y_pred, average='binary' if len(np.unique(y)) == 2 else 'weighted', zero_division=0.0)], 'precision': [precision_score(y_test, y_pred, average='binary' if len(np.unique(y)) == 2 else 'weighted', zero_division=0.0)], 'roc_auc': [roc_auc_score(y_test, y_pred) if len(np.unique(y)) == 2 else np.nan], 'mcc' : [matthews_corrcoef(y_test, y_pred)]})
     performance_df_test["Model"] = model_name
     performance_df_test["Dataset"] = 'Test'
 
@@ -405,8 +407,8 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
         masked_dlbcl_accuracies_test = [np.nan,  np.nan,np.nan]
     else:
         masked_dlbcl_accuracies_test = [accuracy_score(y_test[low_mask],y_pred[low_mask] ), 
-                            precision_score(y_test[low_mask],y_pred[low_mask] , average='binary' if len(np.unique(y)) == 2 else 'weighted'), 
-                            recall_score(y_test[low_mask],y_pred[low_mask], average='binary' if len(np.unique(y)) == 2 else 'weighted' )]
+                            precision_score(y_test[low_mask],y_pred[low_mask] , average='binary' if len(np.unique(y)) == 2 else 'weighted', zero_division=0.0), 
+                            recall_score(y_test[low_mask],y_pred[low_mask], average='binary' if len(np.unique(y)) == 2 else 'weighted', zero_division=0.0)]
 
     performance_df_test = pd.concat([performance_df_test, pd.DataFrame(columns=["low_dlbcl_accuracy", "low_dlbcl_precision", "low_dlbcl_recall"], data = [masked_dlbcl_accuracies_test])], axis=1)
     performance_df = pd.concat([performance_df, performance_df_test])
@@ -451,8 +453,21 @@ def hyperopt_classical(iterations, model_name, selected_features, class_files, t
                         n_clones = [1, 3, 5, 10, 20, 50],
                         genefamily = [False],
                         max_iter = [100, 500, 1000, 5000],
-                        kernel = ['rbf', 'poly', 'sigmoid']
+                        kernel = ['rbf', 'poly', 'sigmoid'],
+                        n_estimators = [100, 200, 400, 800]
                         )
+    already_trained_settings = []
+    model_path = os.path.join(store_path ,"outputs_%s" % model_name)
+    for path, subdirs, files in os.walk(model_path):
+        for name in files:
+            file = os.path.join(path, name)
+            if file.endswith("settings.json"):
+                print(file)
+                with open(file) as f:
+                    settings = f.read()
+                    settings = settings.replace("\n", "").strip()
+                    settings = json.loads(settings)
+                    already_trained_settings.append(settings.copy())
 
     for n in tqdm(range(iterations)):
         tmp_setting = dict()
@@ -466,6 +481,25 @@ def hyperopt_classical(iterations, model_name, selected_features, class_files, t
                     randomly_chosen = ["ordinal_encoding", "onehot_encoding"][np.random.randint(0, 2)]
                     tmp_setting[randomly_chosen] = True
                     print("Randomly set %s to true..." % randomly_chosen)
+        
+        if tmp_setting in already_trained_settings:
+            print("Already trained a model with same setting configuration...")
+            print("Resample tmp_setting...")
+            while True:
+                tmp_setting = dict()
+                for key in distributions:
+                    ind = int(np.random.randint(0, len(distributions[key])))
+                    tmp_setting[key] =distributions[key][ind]
+                if tmp_setting["ordinal_encoding"] == False:
+                    if tmp_setting["genefamily"] == False:
+                        if tmp_setting["onehot_encoding"] ==  False:
+                            print("Warning: onehot_encoding and ordinal_encoding set to False...")
+                            randomly_chosen = ["ordinal_encoding", "onehot_encoding"][np.random.randint(0, 2)]
+                            tmp_setting[randomly_chosen] = True
+                            print("Randomly set %s to true..." % randomly_chosen)
+                if tmp_setting not in already_trained_settings:
+                    break    
+        
         main(model_name, tmp_setting, selected_features, class_files, train_index, test_index, types, store_path)
 
 def load_metadata(types, target_locus, path_dir):
@@ -498,15 +532,15 @@ def baseline(class_files, types, store_path = None):
     def evaluate_baseline(y, y_baseline, low_dlbcl_mask):
         df = pd.DataFrame()
         df['accuracy'] = [accuracy_score(y, y_baseline)]
-        df['recall'] = [recall_score(y, y_baseline, average='binary' if len(np.unique(y)) == 2 else 'weighted')]
-        df['precision'] = [precision_score(y, y_baseline, average='binary' if len(np.unique(y)) == 2 else 'weighted')]
+        df['recall'] = [recall_score(y, y_baseline, average='binary' if len(np.unique(y)) == 2 else 'weighted', zero_division=0.0)]
+        df['precision'] = [precision_score(y, y_baseline, average='binary' if len(np.unique(y)) == 2 else 'weighted', zero_division=0.0)]
         df['roc_auc'] = [roc_auc_score(y, y_baseline) if len(np.unique(y)) == 2 else np.nan]
         # add mathews correlation coefficient
         df['mcc'] = [matthews_corrcoef(y, y_baseline)]
         
         df['low_dlbcl_test_accuracy'] = [ accuracy_score(y[low_dlbcl_mask], y_baseline[low_dlbcl_mask])]
-        df['low_dlbcl_test_precision'] =[ precision_score(y[low_dlbcl_mask], y_baseline[low_dlbcl_mask], average='binary' if len(np.unique(y)) == 2 else 'weighted')]
-        df['low_dlbcl_test_recall'] = [ recall_score(y[low_dlbcl_mask], y_baseline[low_dlbcl_mask], average='binary' if len(np.unique(y)) == 2 else 'weighted')]
+        df['low_dlbcl_test_precision'] =[ precision_score(y[low_dlbcl_mask], y_baseline[low_dlbcl_mask], average='binary' if len(np.unique(y)) == 2 else 'weighted', zero_division=0.0)]
+        df['low_dlbcl_test_recall'] = [ recall_score(y[low_dlbcl_mask], y_baseline[low_dlbcl_mask], average='binary' if len(np.unique(y)) == 2 else 'weighted', zero_division=0.0)]
         
         return df
      
@@ -580,11 +614,11 @@ if __name__ == '__main__':
  
     df_baseline, train_index, test_index = baseline(class_files, comparison_labels, store_path=store_path)
 
-    #hyperopt_classical(10, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
-    #hyperopt_classical(10, "SVM", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
-    #hyperopt_classical(10, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
-    #hyperopt_classical(10, "LightGBM", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
-    #hyperopt_classical(10, "CatBoost", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    hyperopt_classical(20, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    hyperopt_classical(20, "SVM", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    hyperopt_classical(20, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    hyperopt_classical(20, "LightGBM", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    hyperopt_classical(20, "CatBoost", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
 
     score_to_choose_best = "mcc"
     best_score_test = -np.inf

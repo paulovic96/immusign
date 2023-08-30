@@ -14,6 +14,7 @@ import utils
 import time
 import random
 import string
+import skbio
 
 contaminated_hds = ['105-D28-Ig-gDNA-PB-Nuray-A250_S180.clones.txt',
  '108-D0-Ig-gDNA-PB-Nuray-A250_S185.clones.txt',
@@ -26,6 +27,54 @@ contaminated_hds = ['105-D28-Ig-gDNA-PB-Nuray-A250_S180.clones.txt',
  'HD-Mix2-250ng-10hoch6-FR1-Ig-Anna-m-binder-A250_S95.clones.txt',
  'HD-Mix2-250ng-200000-FR1-Ig-Anna-m-binder-A250_S97.clones.txt']
 
+def get_clonset_info(rep, method, quant="proportion"):
+    """
+    chao1:  Non-parametric estimation of the number of classes in a population: Sest = Sobs + ((F2 / 2G + 1) - (FG / 2 (G + 1) 2))
+            Sets = number classes
+            Sobs = number classes observed in sample
+            F = number singeltons (only one individual in class)
+            G = number doubletons (exactly two individuals in class)
+
+    gini index:  'inequality' among clonotypes. 0 for equal distribution and 1 for total unequal dstribution only 1 clone in set
+    
+    simpson: Probability  that two random clones belong to the same clone type
+
+    inv_simpson: 1 / simpson
+
+    shannon:  Distribution of clones within a repertoire. Quotient between Shannon-Index and max Shannon-Index (all clones equal distributed) is called Evenness. 
+
+    clonality: 1-evenness. 1 being a repertoire consisting of only one clone and 0 being a repertoire of maximal evennes (every clone in the repertoire was present at the same frequency).
+    """
+    n_aa_clones = len(rep["aaSeqCDR3"].unique())
+    if quant == "count":
+        counts = np.asarray(rep["cloneCount"])
+    elif quant == "proportion":
+        counts = np.asarray(rep["cloneFraction"])
+
+    if method == "chao1":
+        info = skbio.diversity.alpha.chao1(counts, bias_corrected=True)
+    elif method == "gini":
+        info = skbio.diversity.alpha.gini_index(counts, method='rectangles')
+    elif method == "simpson":
+        info = skbio.diversity.alpha.simpson(counts)
+    elif method == "inv_simpson":
+        info = skbio.diversity.alpha.enspie(counts)
+    elif method == "shannon":
+        info = skbio.diversity.alpha.shannon(counts, base=2)
+    elif method == "clonality":
+        hmax = np.log2(n_aa_clones)
+        shannon = skbio.diversity.alpha.shannon(counts, base=2)
+        if hmax == 0 or shannon==0:
+            eveness = 0 
+        else:
+            eveness = shannon/hmax
+        info = 1-eveness
+        if np.isnan(info) or np.isinf(info):
+            info = 1
+
+    return info
+
+
 def _run_name(model_type):
     return time.strftime("output_%b_%d_%H%M%S_") + ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(5)) +  "_%s" %model_type
 
@@ -33,8 +82,13 @@ def load_data(comparisons, settings):
     df = pd.read_pickle("immusign/immusign_not_normalized_with_out_of_frame_merged_raw_data_cleaned_olga_pgen_embeddings_igh.pkl")
     df = df[~df["clones.txt.name"].isin(contaminated_hds)]
     df = df[df.lymphoma_specification.isin(sum(comparisons,[]))]
+    df.sort_values(["clones.txt.name", "cloneFraction"], ascending= [True, False], inplace =True)
 
-    embedded_df = pd.DataFrame(columns=["clones.txt.name", "label", "embedding"])
+    if settings["add_clonality"]:
+        embedded_df = pd.DataFrame(columns=["clones.txt.name", "label", "embedding", "clonality"])
+    else:
+        embedded_df = pd.DataFrame(columns=["clones.txt.name", "label", "embedding"])
+    
     cloneFraction = []
     for name, group in df.groupby("clones.txt.name"):
         if settings["embedding_method"] == "sum":
@@ -45,16 +99,26 @@ def load_data(comparisons, settings):
         for i, comp in enumerate(comparisons):
             if group.lymphoma_specification.iloc[0] in comp:
                 label = i
-        embedded_df.loc[len(embedded_df)] = [name, label, rep_embedding]
+        
+        if settings["add_clonality"]:
+            clonality = get_clonset_info(group, "clonality")
+            embedded_df.loc[len(embedded_df)] = [name, label, rep_embedding, clonality]
+        else:
+            embedded_df.loc[len(embedded_df)] = [name, label, rep_embedding]
         cloneFraction.append(group['cloneFraction'].values[0])
     
     X = np.concatenate(list(embedded_df["embedding"].apply(lambda x: x.reshape((1,-1)))))
     y = list(embedded_df["label"])
+
+    if settings["add_clonality"]:
+        clonalitys = np.expand_dims(list(embedded_df["clonality"]), axis=1)
+        X = np.hstack((X, clonalitys))
     
     if settings["standardize"]:
         means = np.mean(X, axis=0)
         stds = np.std(X, axis=0)
         X = (X-means)/stds
+    
     return X, np.asarray(y), np.asarray(cloneFraction)
 
 
@@ -281,18 +345,47 @@ def hyperopt_classical(iterations, model_name, comparisons, train_index, test_in
                         input_channel = [320],
                         output_channel = [len(types)],
                         hidden_units = [320, 640, 960, 1280],
-                        hidden_layers = [1, 3, 5, 7],
+                        hidden_layers = [1, 2, 3, 4, 5, 6, 7],
                         standardize = [False, True],
                         lr = [1e-3, 1e-4, 1e-5, 1e-6, 1e-7],
                         n_epochs = [100, 200, 300, 400, 500],
-                        batch_size = [8, 16, 32]
+                        batch_size = [4, 8, 16, 32, 64],
+                        add_clonality = [False, True]
                         )
+    
+    already_trained_settings = []
+    model_path = os.path.join(store_path ,"outputs_%s" % model_name)
+    for path, subdirs, files in os.walk(model_path):
+        for name in files:
+            file = os.path.join(path, name)
+            if file.endswith("settings.json"):
+                print(file)
+                with open(file) as f:
+                    settings = f.read()
+                    settings = settings.replace("\n", "").strip()
+                    settings = json.loads(settings)
+                    already_trained_settings.append(settings.copy())
 
     for n in tqdm(range(iterations)):
         tmp_setting = dict()
         for key in distributions:
             ind = int(np.random.randint(0, len(distributions[key])))
             tmp_setting[key] =distributions[key][ind]
+        if tmp_setting["add_clonality"]:
+            tmp_setting["input_channel"] = 321
+
+        if tmp_setting in already_trained_settings:
+            print("Already trained a model with same setting configuration...")
+            print("Resample tmp_setting...")
+            while True:
+                tmp_setting = dict()
+                for key in distributions:
+                    ind = int(np.random.randint(0, len(distributions[key])))
+                    tmp_setting[key] =distributions[key][ind]
+                if tmp_setting["add_clonality"]:
+                    tmp_setting["input_channel"] = 321
+                if tmp_setting not in already_trained_settings:
+                    break    
         train_model(model_name, comparisons, tmp_setting, train_index, test_index, types, store_path)
 
     
@@ -301,7 +394,7 @@ if __name__ == '__main__':
     comparisons = [['nlphl'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd']]
     comparison_labels = ['nlphl', 'dlbcl', 'hd']
 
-    X, y, clone_fraction = load_data(comparisons, dict(embedding_method = "sum", standardize=True))
+    X, y, clone_fraction = load_data(comparisons, dict(embedding_method = "sum", standardize=True, add_clonality=True))
     
     sss = StratifiedShuffleSplit(n_splits=1, test_size=0.1, random_state=0)
     train_index, test_index =  sss.split(X, y).__next__()
