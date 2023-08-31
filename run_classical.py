@@ -462,7 +462,6 @@ def hyperopt_classical(iterations, model_name, selected_features, class_files, t
         for name in files:
             file = os.path.join(path, name)
             if file.endswith("settings.json"):
-                print(file)
                 with open(file) as f:
                     settings = f.read()
                     settings = settings.replace("\n", "").strip()
@@ -601,9 +600,9 @@ def baseline(class_files, types, store_path = None):
 
 if __name__ == '__main__':
     path_dir = "immusign/data/"
-    store_path = "immusign/results_nlphl_dlbcl_hd/"
-    comparisons = [['nlphl'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd']]
-    comparison_labels = ['nlphl', 'dlbcl', 'hd']
+    store_path = "immusign/results_cll_dlbcl_hd/"
+    comparisons = [['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd']]
+    comparison_labels = ['cll', 'dlbcl', 'hd']
 
     #'unspecified', 'dlbcl', 'nlphl', 'abc_dlbcl', 'thrlbcl', 'lymphadenitis', hd
     
@@ -618,7 +617,7 @@ if __name__ == '__main__':
     hyperopt_classical(20, "SVM", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
     hyperopt_classical(20, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
     hyperopt_classical(20, "LightGBM", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
-    hyperopt_classical(20, "CatBoost", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    #hyperopt_classical(20, "CatBoost", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
 
     score_to_choose_best = "mcc"
     best_score_test = -np.inf
