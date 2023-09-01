@@ -58,7 +58,7 @@ def one_hot_from_label(array, n_classes=None):
 def encode_nucleotides(nSeq):
     return np.stack(list(map(lambda x: nSeq_look_up_dict[x], nSeq)))
 
-def get_clonset_info(rep, method, quant="proportion"):
+def get_clonset_info(rep, method):
     """
     chao1:  Non-parametric estimation of the number of classes in a population: Sest = Sobs + ((F2 / 2G + 1) - (FG / 2 (G + 1) 2))
             Sets = number classes
@@ -79,9 +79,9 @@ def get_clonset_info(rep, method, quant="proportion"):
 
 
     n_aa_clones = len(rep["aaSeqCDR3"].unique())
-    if quant == "count":
+    if quant == "cloneCount":
         counts = np.asarray(rep["cloneCount"])
-    elif quant == "proportion":
+    elif quant == "cloneFraction":
         counts = np.asarray(rep["cloneFraction"])
 
     if method == "chao1":
@@ -99,10 +99,18 @@ def get_clonset_info(rep, method, quant="proportion"):
         shannon = skbio.diversity.alpha.shannon(counts, base=2)
         eveness = shannon/hmax
         info = 1-eveness
+    elif method == "nucleotid_clones":
+        info = len(rep["nSeqCDR3"].unique())
+    elif method == "out_of_frames":
+        info = rep["aaSeqCDR3"].apply(lambda x: "_" in x or "*" in x)
+    elif method == "reads":
+        info = sum(rep["cloneCount"])
+    elif method == "aminoacid_clones":
+        info = n_aa_clones
     
     return info
 
-def read_clones_txt(files, clones_txt_dict=None):
+def read_clones_txt(files, clones_txt_dict=None, normalize_read_count = None):
     """
     KF1: Helix/bend preference,
     KF2: Side-chain size,
@@ -121,31 +129,46 @@ def read_clones_txt(files, clones_txt_dict=None):
             file = os.path.join(clones_txt_dict, file)          
         df_file = pd.read_csv(file, sep="\t")
         df_file["clones.txt.name"] = os.path.basename(file)
-        df_file["cloneFraction"] = df_file["cloneFraction"].apply(lambda x: float(x.replace(",",".").replace("+","-")) if isinstance(x, str) else float(x))
+
+        if normalize_read_count == None:
+            df_file["cloneFraction"] = df_file["cloneFraction"].apply(lambda x: float(x.replace(",",".").replace("+","-")) if isinstance(x, str) else float(x)) 
+        else:
+            norm_facktor = sum(df_file["cloneCount"])/normalize_read_count
+            df_file["cloneCount"] = df_file["cloneCount"]/norm_facktor
+            df_file = df_file[~(df_file["cloneCount"]<2)]
+            df_file["cloneFraction"] = (df_file["cloneCount"]/sum(df_file["cloneCount"])).apply(np.ceil)
+
         df_file["clonality"] = get_clonset_info(df_file, "clonality")
         df_file["shannon"] = get_clonset_info(df_file, "shannon")
         df_file["inv_simpson"] = get_clonset_info(df_file, "inv_simpson")
         df_file["simpson"] = get_clonset_info(df_file, "simpson")
         df_file["gini"] = get_clonset_info(df_file, "gini")
         df_file["chao1"] = get_clonset_info(df_file, "chao1")
+        df_file["#nucleotide_clonotypes"] = get_clonset_info(df_file, "nucleotid_clones")
+        df_file["#aminoacid_clonotypes"] = get_clonset_info(df_file, "aminoacid_clones")
+        df_file["total_reads"] = get_clonset_info(df_file, "reads")
+        df_file["out_of_frames"] = get_clonset_info(df_file, "out_of_frames")
 
         df_file[['KF1', 'KF2', 'KF3', 'KF4', 'KF5',
                 'KF6', 'KF7', 'KF8', 'KF9', 'KF10']] = df_file.aaSeqCDR3.apply(lambda x: list(peptides.Peptide(x).kidera_factors())).to_list()
+        
+        df_file["low_reads"] = df_file["total_reads"] < 30000
+        df_file["hypermutated"] = df_file["vBestIdentityPercent"] < 0.98
 
         df_raw.append(df_file)
     df_raw = pd.concat(df_raw)
     return df_raw
 
-def load_clone_files_data(project_path):
+def load_clone_files_data(project_path, normalize_read_count=None):
     clone_files = []
     for path, subdirs, files in os.walk(project_path):
         for name in files:
             file = os.path.join(path, name)
             if file.endswith("clones.txt"):
                 clone_files.append(file)
-    df = read_clones_txt(clone_files)
+    df = read_clones_txt(clone_files, normalize_read_count)
     return df
-
+ 
 def convert_rtwb_to_pdtwb(r_twb):
     pd_twb = pd.DataFrame()
     for i, sample_name in enumerate(r_twb.names):
