@@ -108,6 +108,10 @@ def load_data(comparisons, settings):
                 rep_embedding = sum(group.cloneCount * group.esm_embedding * group.olga_pgen_aa)
             elif settings["embedding_method"] == "prob_weighted_mean":
                 rep_embedding = np.mean(group.cloneCount * group.esm_embedding * group.olga_pgen_aa)
+            elif settings["embedding_method"] == "raw_sum":
+                rep_embedding = sum(group.esm_embedding)
+            elif settings["embedding_method"] == "raw_mean":
+                rep_embedding = np.mean(group.esm_embedding)
         else:
             rep_embedding = np.stack((group.cloneCount * group.esm_embedding).values)
         
@@ -500,7 +504,7 @@ def hyperopt_classical(iterations, model_name, comparisons, train_index, test_in
     if train_baseline:
         distributions = dict(
                             n_splits= [3],
-                            embedding_method =["sum", "mean", "prob_weighted_sum", "prob_weighted_mean"],
+                            embedding_method = ["raw_mean", "raw_sum"], #["sum", "mean", "prob_weighted_sum", "prob_weighted_mean", "raw_mean", "raw_sum"],
                             standardize = [False, True],
                             add_clonality = [False, True],
                             stack_embeddings = [False],
@@ -514,7 +518,7 @@ def hyperopt_classical(iterations, model_name, comparisons, train_index, test_in
         distributions = dict(
                             device = ["mps"],
                             n_splits= [3],
-                            embedding_method =["sum", "mean", "prob_weighted_sum", "prob_weighted_mean"],
+                            embedding_method =["sum", "mean", "prob_weighted_sum", "prob_weighted_mean", "raw_mean", "raw_sum"],
                             input_channel = [320],
                             output_channel = [len(types)],
                             hidden_units = [320, 640, 960, 1280],
@@ -567,17 +571,18 @@ def hyperopt_classical(iterations, model_name, comparisons, train_index, test_in
 
     
 if __name__ == '__main__':
-    store_path = "immusign/results_cll_dlbcl_hd_unspecified_nlphl_thrlbcl_lymphadenitis/"
-    comparisons = [['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['unspecified'], ['nlphl'], ['thrlbcl'], ['lymphadenitis']]
-    comparison_labels = ['cll', 'dlbcl', 'hd', 'unspecified','nlphl',  'thrlbcl', 'lymphadenitis']
+    store_path = "immusign/results_cll_dlbcl_hd/"
+    comparisons = [['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd']]#[['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['unspecified'], ['nlphl'], ['thrlbcl'], ['lymphadenitis']]
+    comparison_labels = ['cll', 'dlbcl', 'hd'] #['cll', 'dlbcl', 'hd', 'unspecified','nlphl',  'thrlbcl', 'lymphadenitis']
+
 
     X, y, clone_fraction = load_data(comparisons, dict(embedding_method = "sum", standardize=True, add_clonality=True, n_clones="all", stack_embeddings=False))
     
     sss = StratifiedShuffleSplit(n_splits=1, test_size=0.1, random_state=0)
     train_index, test_index =  sss.split(X, y).__next__()
 
-    hyperopt_classical(30, "Perceptron", comparisons, train_index, test_index, comparison_labels, store_path=store_path)
-    hyperopt_classical(30, "ResNet", comparisons, train_index, test_index, comparison_labels, store_path=store_path)
+    #hyperopt_classical(30, "Perceptron", comparisons, train_index, test_index, comparison_labels, store_path=store_path)
+    #hyperopt_classical(30, "ResNet", comparisons, train_index, test_index, comparison_labels, store_path=store_path)
     hyperopt_classical(30, "Logistic Regression", comparisons, train_index, test_index, comparison_labels, store_path=store_path, train_baseline=True)
     hyperopt_classical(30, "Random Forest", comparisons, train_index, test_index, comparison_labels, store_path=store_path, train_baseline=True)
     
@@ -610,6 +615,7 @@ if __name__ == '__main__':
                             with open(os.path.join(path,"test_scores.txt")) as f:
                                 scores_txt_valid = f.read()
     print("\n\n")
+    print(store_path)
     print("Best model Test: ", best_model_test)
     print(scores_txt_test)
     print("\n\n")
