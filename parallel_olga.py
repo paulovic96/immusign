@@ -52,12 +52,7 @@ def main():
 
 
 
-    #input_files = ["Olga_input_igh_1.tsv", "Olga_input_igh_2.tsv", "Olga_input_igh_3.tsv", 
-    #               "Olga_input_igh_4.tsv", "Olga_input_igh_5.tsv", "Olga_input_igh_6.tsv",
-    #               "Olga_input_igh_7.tsv", "Olga_input_igh_8.tsv"]
-
-
-    df_to_chunk = pd.read_csv(input_file,sep='\t', header=None)
+    df_to_chunk = pd.read_csv(input_file, sep='\t', header=None)
     num_processes = multiprocessing.cpu_count()  # Number of available CPU cores
     start_point = 0
     chunk_length = int(np.ceil(len(df_to_chunk.iloc[start_point:])/num_processes))
@@ -89,13 +84,6 @@ def main():
     results = pd.concat(results)
     results.to_csv(input_file.replace("input", "output"), sep="\t", header=False, index=False)
 
-    #input_files = ["Olga_input_trb_1.tsv", "Olga_input_trb_2.tsv", "Olga_input_trb_3.tsv", 
-    #               "Olga_input_trb_4.tsv", "Olga_input_trb_5.tsv", "Olga_input_trb_6.tsv",
-    #               "Olga_input_trb_7.tsv", "Olga_input_trb_8.tsv"]
-
-    #num_processes = multiprocessing.cpu_count()  # Number of available CPU cores
-    #with multiprocessing.Pool(processes=num_processes) as pool:
-    #    pool.map(Copier("--humanTRB"), input_files)
     for i,f in enumerate(input_files):
         os.remove(f)
         os.remove(output_files[i])
