@@ -58,7 +58,7 @@ def one_hot_from_label(array, n_classes=None):
 def encode_nucleotides(nSeq):
     return np.stack(list(map(lambda x: nSeq_look_up_dict[x], nSeq)))
 
-def get_clonset_info(rep, method):
+def get_clonset_info(rep, method, quant="cloneFraction"):
     """
     chao1:  Non-parametric estimation of the number of classes in a population: Sest = Sobs + ((F2 / 2G + 1) - (FG / 2 (G + 1) 2))
             Sets = number classes
@@ -97,8 +97,13 @@ def get_clonset_info(rep, method):
     elif method == "clonality":
         hmax = np.log2(n_aa_clones)
         shannon = skbio.diversity.alpha.shannon(counts, base=2)
-        eveness = shannon/hmax
+        if hmax == 0 or shannon==0:
+            eveness = 0 
+        else:
+            eveness = shannon/hmax
         info = 1-eveness
+        if np.isnan(info) or np.isinf(info):
+            info = 1
     elif method == "nucleotid_clones":
         info = len(rep["nSeqCDR3"].unique())
     elif method == "out_of_frames":
@@ -136,7 +141,8 @@ def read_clones_txt(files, clones_txt_dict=None, normalize_read_count = None):
             norm_facktor = sum(df_file["cloneCount"])/normalize_read_count
             df_file["cloneCount"] = df_file["cloneCount"]/norm_facktor
             df_file = df_file[~(df_file["cloneCount"]<2)]
-            df_file["cloneFraction"] = (df_file["cloneCount"]/sum(df_file["cloneCount"])).apply(np.ceil)
+            df_file["cloneFraction"] = (df_file["cloneCount"]/sum(df_file["cloneCount"]))
+            df_file["cloneCount"] = df_file["cloneCount"].apply(np.ceil)
 
         df_file["clonality"] = get_clonset_info(df_file, "clonality")
         df_file["shannon"] = get_clonset_info(df_file, "shannon")
@@ -166,7 +172,7 @@ def load_clone_files_data(project_path, normalize_read_count=None):
             file = os.path.join(path, name)
             if file.endswith("clones.txt"):
                 clone_files.append(file)
-    df = read_clones_txt(clone_files, normalize_read_count)
+    df = read_clones_txt(clone_files, normalize_read_count=normalize_read_count)
     return df
  
 def convert_rtwb_to_pdtwb(r_twb):
