@@ -504,11 +504,11 @@ def hyperopt_classical(iterations, model_name, comparisons, train_index, test_in
     if train_baseline:
         distributions = dict(
                             n_splits= [3],
-                            embedding_method = ["raw_mean", "raw_sum"], #["sum", "mean", "prob_weighted_sum", "prob_weighted_mean", "raw_mean", "raw_sum"],
+                            embedding_method = ["sum", "raw_sum"], #["sum", "mean", "prob_weighted_sum", "prob_weighted_mean", "raw_mean", "raw_sum"],
                             standardize = [False, True],
                             add_clonality = [False, True],
                             stack_embeddings = [False],
-                            n_clones = ["all", 1, 5, 10 ,20, 50],
+                            n_clones = ["all"],#["all", 1, 5, 10 ,20, 50],
                             max_depth=[3, 6, 8, 16],
                             max_iter = [100, 500, 1000, 5000],
                             kernel = ['rbf', 'poly', 'sigmoid'],
@@ -518,18 +518,18 @@ def hyperopt_classical(iterations, model_name, comparisons, train_index, test_in
         distributions = dict(
                             device = ["mps"],
                             n_splits= [3],
-                            embedding_method =["sum", "mean", "prob_weighted_sum", "prob_weighted_mean", "raw_mean", "raw_sum"],
+                            embedding_method = ["sum", "raw_sum"],#["sum", "mean", "prob_weighted_sum", "prob_weighted_mean", "raw_mean", "raw_sum"],
                             input_channel = [320],
                             output_channel = [len(types)],
-                            hidden_units = [320, 640, 960, 1280],
-                            hidden_layers = [1, 2, 3, 4, 5, 6, 7],
-                            standardize = [False, True],
-                            lr = [1e-3, 1e-4, 1e-5, 1e-6, 1e-7],
-                            n_epochs = [100, 200, 300, 400, 500],
-                            batch_size = [4, 8, 16, 32, 64],
+                            hidden_units = [640, 960, 1280],#[320, 640, 960, 1280],
+                            hidden_layers = [3,4,5,6],#[1, 2, 3, 4, 5, 6, 7],
+                            standardize = [True, False],#[False, True],
+                            lr = [1e-4 , 1e-5, 1e-6],#[1e-3, 1e-4, 1e-5, 1e-6, 1e-7],
+                            n_epochs = [200,300,400],#[100, 200, 300, 400, 500],
+                            batch_size = [4,8,16],#[4, 8, 16, 32, 64],
                             add_clonality = [False, True],
                             stack_embeddings = [False],
-                            n_clones = ["all", 1, 5, 10 ,20, 50]
+                            n_clones = ["all"]#["all", 1, 5, 10 ,20, 50]
                             )
     
     already_trained_settings = []
@@ -571,20 +571,20 @@ def hyperopt_classical(iterations, model_name, comparisons, train_index, test_in
 
     
 if __name__ == '__main__':
-    store_path = "immusign/results_cll_dlbcl_hd/"
-    comparisons = [['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd']]#[['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['unspecified'], ['nlphl'], ['thrlbcl'], ['lymphadenitis']]
-    comparison_labels = ['cll', 'dlbcl', 'hd'] #['cll', 'dlbcl', 'hd', 'unspecified','nlphl',  'thrlbcl', 'lymphadenitis']
+    store_path = "immusign/results_cll_dlbcl_hd"
+    #comparisons = [['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd']]#[['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['unspecified'], ['nlphl'], ['thrlbcl'], ['lymphadenitis']]
+    #comparison_labels = ['cll', 'dlbcl', 'hd'] #['cll', 'dlbcl', 'hd', 'unspecified','nlphl',  'thrlbcl', 'lymphadenitis']
 
 
-    X, y, clone_fraction = load_data(comparisons, dict(embedding_method = "sum", standardize=True, add_clonality=True, n_clones="all", stack_embeddings=False))
+    #X, y, clone_fraction = load_data(comparisons, dict(embedding_method = "sum", standardize=True, add_clonality=True, n_clones="all", stack_embeddings=False))
     
-    sss = StratifiedShuffleSplit(n_splits=1, test_size=0.1, random_state=0)
-    train_index, test_index =  sss.split(X, y).__next__()
+    #sss = StratifiedShuffleSplit(n_splits=1, test_size=0.1, random_state=0)
+    #train_index, test_index =  sss.split(X, y).__next__()
 
     #hyperopt_classical(30, "Perceptron", comparisons, train_index, test_index, comparison_labels, store_path=store_path)
-    #hyperopt_classical(30, "ResNet", comparisons, train_index, test_index, comparison_labels, store_path=store_path)
-    hyperopt_classical(30, "Logistic Regression", comparisons, train_index, test_index, comparison_labels, store_path=store_path, train_baseline=True)
-    hyperopt_classical(30, "Random Forest", comparisons, train_index, test_index, comparison_labels, store_path=store_path, train_baseline=True)
+    #hyperopt_classical(10, "ResNet", comparisons, train_index, test_index, comparison_labels, store_path=store_path)
+    #hyperopt_classical(30, "Logistic Regression", comparisons, train_index, test_index, comparison_labels, store_path=store_path, train_baseline=True)
+    #hyperopt_classical(30, "Random Forest", comparisons, train_index, test_index, comparison_labels, store_path=store_path, train_baseline=True)
     
     #store_path = "immusign/results_nlphl_dlbcl_hd/outputs_DNNs/"
     score_to_choose_best = "mcc"
@@ -594,12 +594,15 @@ if __name__ == '__main__':
     best_model_valid = ""
     scores_txt_test = ""
     scores_txt_valid = ""
+    scores_txt_baseline = ""
     for path, subdirs, files in os.walk(store_path):
         for name in files:
                 file = os.path.join(path, name)
                 if file.endswith("performance.csv"):
                     if "Baseline" in file:
                         baseline_results = pd.read_csv(file)
+                        with open(os.path.join(path,"test_scores.txt")) as f:
+                                scores_txt_baseline = f.read()
                     else:
                         model_results = pd.read_csv(file)
                         score_test = model_results[model_results["Dataset"] == "Test"][score_to_choose_best].iloc[0]
@@ -616,6 +619,9 @@ if __name__ == '__main__':
                                 scores_txt_valid = f.read()
     print("\n\n")
     print(store_path)
+    print("Baseline: ")
+    print(scores_txt_baseline)
+    print("\n\n")
     print("Best model Test: ", best_model_test)
     print(scores_txt_test)
     print("\n\n")
