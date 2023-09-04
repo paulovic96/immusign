@@ -18,7 +18,7 @@ model.eval().to(device)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Embed AS-Sequences stored sorted in a .txt file")
+    parser = argparse.ArgumentParser(description="Embed AS-Sequences stored in a .txt file")
     # Add arguments using add_argument method
     parser.add_argument('--i', type=str, help='Input file')
     parser.add_argument('--o', type=str, help='Output file')
