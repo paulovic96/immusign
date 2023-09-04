@@ -16,11 +16,10 @@ import xgboost as xgb
 from catboost import CatBoostClassifier
 import lightgbm
 import warnings
+from utils import get_clonset_info
 warnings.filterwarnings("ignore")
 np.random.seed(42)
 random.seed(42)
-
-import skbio
 
 
 contaminated_hds = ['105-D28-Ig-gDNA-PB-Nuray-A250_S180.clones.txt',
@@ -34,52 +33,7 @@ contaminated_hds = ['105-D28-Ig-gDNA-PB-Nuray-A250_S180.clones.txt',
  'HD-Mix2-250ng-10hoch6-FR1-Ig-Anna-m-binder-A250_S95.clones.txt',
  'HD-Mix2-250ng-200000-FR1-Ig-Anna-m-binder-A250_S97.clones.txt']
 
-def get_clonset_info(rep, method, quant="proportion"):
-    """
-    chao1:  Non-parametric estimation of the number of classes in a population: Sest = Sobs + ((F2 / 2G + 1) - (FG / 2 (G + 1) 2))
-            Sets = number classes
-            Sobs = number classes observed in sample
-            F = number singeltons (only one individual in class)
-            G = number doubletons (exactly two individuals in class)
 
-    gini index:  'inequality' among clonotypes. 0 for equal distribution and 1 for total unequal dstribution only 1 clone in set
-    
-    simpson: Probability  that two random clones belong to the same clone type
-
-    inv_simpson: 1 / simpson
-
-    shannon:  Distribution of clones within a repertoire. Quotient between Shannon-Index and max Shannon-Index (all clones equal distributed) is called Evenness. 
-
-    clonality: 1-evenness. 1 being a repertoire consisting of only one clone and 0 being a repertoire of maximal evennes (every clone in the repertoire was present at the same frequency).
-    """
-
-
-    n_aa_clones = len(rep["aaSeqCDR3"].unique())
-    if quant == "count":
-        counts = np.asarray(rep["cloneCount"])
-    elif quant == "proportion":
-        counts = np.asarray(rep["cloneFraction"])
-
-    if method == "chao1":
-        info = skbio.diversity.alpha.chao1(counts, bias_corrected=True)
-    elif method == "gini":
-        info = skbio.diversity.alpha.gini_index(counts, method='rectangles')
-    elif method == "simpson":
-        info = skbio.diversity.alpha.simpson(counts)
-    elif method == "inv_simpson":
-        info = skbio.diversity.alpha.enspie(counts)
-    elif method == "shannon":
-        info = skbio.diversity.alpha.shannon(counts, base=2)
-    elif method == "clonality":
-        hmax = np.log2(n_aa_clones)
-        shannon = skbio.diversity.alpha.shannon(counts, base=2)
-        eveness = shannon/hmax
-        info = 1-eveness
-        if np.isnan(info) or np.isinf(info):
-            info = 1
-
-    
-    return info
 
 def create_vdj_index(class_files, family = False):
     
@@ -171,39 +125,70 @@ def read_feature(files, features , n_entries, flatten=True):
     data = []
     cloneFraction = []
 
+    read_features = features.copy()
     for i, file in enumerate(files):
         df = pd.read_csv("immusign/data/clones_mit_kidera/%s" %file, sep="\t")
         df = df[df['cloneFraction'].apply(lambda x: isinstance(x, (int, float)))] 
         if (df.shape[0] == 0):
             continue
         cloneFraction.append(df['cloneFraction'].values[0])
-        if "clonality" in features:
+        if "clonality" in read_features:
             clonality = get_clonset_info(df, "clonality")
-            features.remove("clonality")
+            added_clonality = True
+            read_features.remove("clonality")
+        else:
+            added_clonality = False
+        if "shannon" in read_features:
+            shannon = get_clonset_info(df, "shannon")
+            added_shannon = True
+            read_features.remove("shannon")
+        else:
+            added_shannon = False
+        if "richness" in read_features:
+            richness = get_clonset_info(df, "aminoacid_clones")
+            added_richness = True
+            read_features.remove("richness")
+        else:
+            added_richness = False
     
-        df = df.iloc[:n_entries]
-        d = df[features].values
+        df = df.iloc[:n_entries] 
+        d = df[read_features].values
         # PADD ING FOR RANDOM FOREST
-        if (df[features].values.shape[0] < n_entries):
-            pad = n_entries  - df[features].values.shape[0]
-            d = [df[features].values, np.zeros((pad, len(features)))]
+        if (df[read_features].values.shape[0] < n_entries):
+            pad = n_entries  - df[read_features].values.shape[0]
+            d = [df[read_features].values, np.zeros((pad, len(read_features)))]
             d= np.concatenate(d)
-            
         # flatten data such that it can be an input for the random forest
         if flatten:
+            d = d.flatten()
             try: 
-                data.append(np.append(d.flatten(),clonality))
-                features += ["clonality"]
-            except NameError: 
+                if added_clonality:
+                    d = np.append(d, clonality)
+                    read_features += ["clonality"]
+                if added_shannon:
+                    d = np.append(d, shannon)
+                    read_features += ["shannon"]
+                if added_richness:
+                    d = np.append(d, richness)
+                    read_features += ["richness"]  
+                data.append(d)
+            except NameError as e:
                 data.append(d.flatten())
         else:
             try: 
-                d = np.column_stack((d, np.repeat(clonality)))
+                if added_clonality:
+                    d = np.column_stack((d, np.repeat(clonality)))
+                    read_features += ["clonality"]
+                if added_shannon:
+                    d = np.column_stack((d, np.repeat(shannon)))
+                    read_features += ["shannon"]
+                if added_richness:
+                    d = np.column_stack((d, np.repeat(richness)))
+                    read_features += ["richness"]
                 data.append(d)
-                features += ["clonality"]
+                
             except NameError: 
                 data.append(d)
-            
     data = np.stack(data, axis=0)
     return data, cloneFraction
 
@@ -227,7 +212,7 @@ def create_features(class_files, feature_names, object_types, n_entries=5, oneho
     column_to_type = {}
     for i in range(n_entries):
         for feature in feature_names:
-            if feature == "clonality":
+            if feature == "clonality" or feature == "shannon" or feature == "richness":
                 continue
             else:
                 column_names.append(feature + "_%i" %i)
@@ -237,6 +222,14 @@ def create_features(class_files, feature_names, object_types, n_entries=5, oneho
         column_names.append("clonality")
         column_to_features["clonality"] = "clonality"
         column_to_type["clonality"] = object_types[feature_names.index("clonality")]
+    if "shannon" in feature_names:
+        column_names.append("shannon")
+        column_to_features["shannon"] = "shannon"
+        column_to_type["shannon"] = object_types[feature_names.index("shannon")]
+    if "richness" in feature_names:
+        column_names.append("richness")
+        column_to_features["richness"] = "richness"
+        column_to_type["richness"] = object_types[feature_names.index("richness")]
 
     X = []
     clone_fractions = []
@@ -301,8 +294,8 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
     with open(os.path.join(store_dir, "settings.json"), 'w') as outfile:
         json.dump(settings, outfile, indent=2)
 
-    feature_names = ['cloneFraction', 'lengthOfCDR3', 'clonality']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)] 
-    object_types = ['float64', 'int64', 'float64']  +  ['object', 'object', 'object']+['float64' for i in range(10)] 
+    feature_names = ['cloneFraction', 'lengthOfCDR3', 'clonality', 'shannon', 'richness']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)] 
+    object_types = ['float64', 'int64', 'float64', 'float64', 'float64']  +  ['object', 'object', 'object']+['float64' for i in range(10)] 
 
     # create dict from feature name to object type
     feature_dict = {}
@@ -437,24 +430,36 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
             target_labels = np.unique(np.concatenate([y_test[low_mask], y_pred[low_mask]]))               
         f.write(classification_report(y_test[low_mask], y_pred[low_mask], target_names=np.asarray(types)[target_labels], zero_division=0))
         mcc = matthews_corrcoef(y_test[low_mask], y_pred[low_mask])
-        f.write(row_fmt_mcc.format("mcc", "", "", mcc, "", width=width, digits=digits))         
-                        
-    
+        f.write(row_fmt_mcc.format("mcc", "", "", mcc, "", width=width, digits=digits)) 
 
+    with open(os.path.join(store_dir, "selected_features.json"), 'w') as outfile:
+        json.dump(selected_features, outfile, indent=2)
+    
+    try:
+        with open(os.path.join(store_dir, "feature_importances.json"), 'w') as outfile:
+                sorted_idx = np.argsort(np.asarray(model.feature_importances_))[::-1]
+                sorted_X = np.asarray(X.columns)[sorted_idx]
+                res = dict(zip(list(sorted_X), list(np.sort(np.asarray(model.feature_importances_, dtype=np.float64))[::-1])))
+                json.dump(res, outfile)
+    except:     
+        print("Feature Importance not available for model: %s" % model_name)
 
 def hyperopt_classical(iterations, model_name, selected_features, class_files, train_index, test_index, types, store_path=None):
 
     distributions = dict(
                         n_splits= [3],
-                        standardize = [False, True],
-                        ordinal_encoding = [False, True],
-                        onehot_encoding = [False, True],
-                        max_depth=[3, 6, 8, 16],
-                        n_clones = [1, 3, 5, 10, 20, 50],
+                        standardize = [False], #[False, True],
+                        ordinal_encoding = [False], #[False, True],
+                        onehot_encoding = [True], #[False, True],
+                        max_depth=[16], #[3, 6, 8, 16],
+                        n_clones = [1], #[1, 3, 5, 10, 20, 50],
                         genefamily = [False],
-                        max_iter = [100, 500, 1000, 5000],
-                        kernel = ['rbf', 'poly', 'sigmoid'],
-                        n_estimators = [100, 200, 400, 800]
+                        max_iter = [100], #[100, 500, 1000, 5000],
+                        kernel = ['rbf'],#['rbf', 'poly', 'sigmoid'],
+                        n_estimators = [800], #[100, 200, 400, 800], #[100, 200, 400, 800],
+                        add_clonality = [True, False], #[True, False],
+                        add_shannon = [True, False], #[True, False],
+                        add_richness = [True, False]#[True, False],
                         )
     already_trained_settings = []
     model_path = os.path.join(store_path ,"outputs_%s" % model_name)
@@ -499,7 +504,16 @@ def hyperopt_classical(iterations, model_name, selected_features, class_files, t
                 if tmp_setting not in already_trained_settings:
                     break    
         
-        main(model_name, tmp_setting, selected_features, class_files, train_index, test_index, types, store_path)
+        temp_selected_features = selected_features.copy()
+        if tmp_setting["add_clonality"]:
+            temp_selected_features += ["clonality"]
+        if tmp_setting["add_shannon"]:
+            temp_selected_features += ["shannon"]
+        if tmp_setting["add_richness"]:
+            temp_selected_features += ["richness"]
+
+        main(model_name, tmp_setting, temp_selected_features, class_files, train_index, test_index, types, store_path)
+       
 
 def load_metadata(types, target_locus, path_dir):
 
@@ -600,24 +614,41 @@ def baseline(class_files, types, store_path = None):
 
 if __name__ == '__main__':
     path_dir = "immusign/data/"
-    store_path = "immusign/results_cll_dlbcl_hd_unspecified_nlphl_thrlbcl_lymphadenitis/"
-    comparisons = [['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['unspecified'], ['nlphl'], ['thrlbcl'], ['lymphadenitis']]
-    comparison_labels = ['cll', 'dlbcl', 'hd', 'unspecified','nlphl',  'thrlbcl', 'lymphadenitis']
+    store_path = "immusign/results_cll_dlbcl_hd/"
+    comparisons = [['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd']]#[['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['unspecified'], ['nlphl'], ['thrlbcl'], ['lymphadenitis']]
+    comparison_labels = ['cll', 'dlbcl', 'hd']#['cll', 'dlbcl', 'hd', 'unspecified','nlphl',  'thrlbcl', 'lymphadenitis']
 
     #'unspecified', 'dlbcl', 'nlphl', 'abc_dlbcl', 'thrlbcl', 'lymphadenitis', hd
     
     class_files, number_of_repertoires = load_metadata(comparisons, "IGH", path_dir)
     print(number_of_repertoires)
 
-    selected_features = ['cloneFraction', 'lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)]
- 
     df_baseline, train_index, test_index = baseline(class_files, comparison_labels, store_path=store_path)
-
-    hyperopt_classical(30, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
-    hyperopt_classical(30, "SVM", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
-    hyperopt_classical(30, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
-    hyperopt_classical(30, "LightGBM", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
-    #hyperopt_classical(20, "CatBoost", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    selected_features = ['cloneFraction', 'lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)]
+    
+    models_to_train = ["Random Forest"]
+    for model_name in models_to_train:
+        already_trained_feature_combinations = []
+        model_path = os.path.join(store_path ,"outputs_%s" % model_name.replace(" ", ""))
+        for path, subdirs, files in os.walk(model_path):
+            for name in files:
+                file = os.path.join(path, name)
+                if file.endswith("selected_features.json"):
+                    with open(file) as f:
+                        settings = f.read()
+                        settings = settings.replace("\n", "").strip()
+                        settings = json.loads(settings)
+                        already_trained_feature_combinations.append(settings.copy())
+        for i in tqdm(range(100)):
+                ind = np.random.randint(0, 2, size=len(selected_features)).astype(bool)
+                selected_features_i = list(np.asarray(selected_features)[ind])
+                while selected_features_i in already_trained_feature_combinations:
+                    ind = np.random.randint(0, 2, size=len(selected_features)).astype(bool)
+                    selected_features_i = list(np.asarray(selected_features)[ind])                                 
+                hyperopt_classical(1, model_name, selected_features_i, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+                already_trained_feature_combinations.append(selected_features_i)
+    
+    #hyperopt_classical(1, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
 
     score_to_choose_best = "mcc"
     best_score_test = -np.inf
