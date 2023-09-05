@@ -340,9 +340,9 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
         elif model_name == "TabPFN":
             raise NotImplementedError
         elif model_name == "Logistic Regression":
-            model = LogisticRegression(max_iter=settings["max_iter"])
+            model = LogisticRegression(max_iter=settings["max_iter"], penalty=settings['regularization'], C=settings['C'], solver=settings['solver'])
         elif model_name == "SVM":
-            model = SVC(max_iter=settings["max_iter"], kernel = settings["kernel"])
+            model = SVC(max_iter=settings["max_iter"], kernel = settings["kernel"], C=settings["C"])
         return model
 
     for k, (train, val) in enumerate(k_fold.split(X, y)):
@@ -436,33 +436,104 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
         json.dump(selected_features, outfile, indent=2)
     
     try:
+        if model_name in ["Logistic Regression" or "SVM"]:
+            coefficients = model.coef_[0]
+            feature_importance = coefficients
+        else:
+            feature_importance = model.feature_importances_
         with open(os.path.join(store_dir, "feature_importances.json"), 'w') as outfile:
-                sorted_idx = np.argsort(np.asarray(model.feature_importances_))[::-1]
+                sorted_idx = np.argsort(np.asarray(abs(feature_importance)))[::-1]
                 sorted_X = np.asarray(X.columns)[sorted_idx]
-                res = dict(zip(list(sorted_X), list(np.sort(np.asarray(model.feature_importances_, dtype=np.float64))[::-1])))
+                sorted_features = np.asarray(feature_importance, dtype=np.float64)[sorted_idx]
+                res = dict(zip(list(sorted_X), list(sorted_features)))
                 json.dump(res, outfile)
     except:     
         print("Feature Importance not available for model: %s" % model_name)
 
-def hyperopt_classical(iterations, model_name, selected_features, class_files, train_index, test_index, types, store_path=None):
-
-    distributions = dict(
+def sample_setting(model_name):
+    general_distributions = dict(
                         n_splits= [3],
-                        standardize = [False], #[False, True],
+                        n_clones = [1, 2, 3, 4, 5, 10, 50, 100, 1000], #[1, 3, 5, 10, 20, 50],
+                        genefamily = [False],
+                        standardize = [True, False], #[False, True],
                         ordinal_encoding = [False], #[False, True],
                         onehot_encoding = [True], #[False, True],
-                        max_depth=[16], #[3, 6, 8, 16],
-                        n_clones = [1], #[1, 3, 5, 10, 20, 50],
-                        genefamily = [False],
-                        max_iter = [100], #[100, 500, 1000, 5000],
-                        kernel = ['rbf'],#['rbf', 'poly', 'sigmoid'],
-                        n_estimators = [800], #[100, 200, 400, 800], #[100, 200, 400, 800],
-                        add_clonality = [True, False], #[True, False],
-                        add_shannon = [True, False], #[True, False],
-                        add_richness = [True, False]#[True, False],
+                        add_clonality = [True], #[True, False],
+                        add_shannon = [False], #[True, False],
+                        add_richness = [True], #[True, False],
                         )
+    
+    tree_distributions = dict(
+                        n_estimators = [200, 800], #[100, 200, 400, 800], #[100, 200, 400, 800],
+                        max_depth=[16], #[3, 6, 8, 16],
+    )
+
+    regression_distributions = dict(
+                        max_iter = [10000],
+                        regularization = [None, 'l2', 'l1', 'elasticnet'],
+                        C = [0.001, 0.01, 0.1, 1, 10, 100],
+                        solver = ["lbfgs", "saga"]
+    )
+
+    svm_distributions = dict(
+                        max_iter = [10000],
+                        kernel = ['rbf'],
+                        C = [0.001, 0.01, 0.1, 1, 10, 100],
+    )
+
+    tree_models = ["Random Forest", "XGBoost", "LightGBM", "CatBoost"]
+    
+    max_possible_combinations = 1
+    tmp_setting = dict()
+
+    for key in general_distributions:
+        ind = int(np.random.randint(0, len(general_distributions[key])))
+        tmp_setting[key] =general_distributions[key][ind]
+        max_possible_combinations *= len(general_distributions[key])
+    if model_name in tree_models:
+        for key in tree_distributions:
+            ind = int(np.random.randint(0, len(tree_distributions[key])))
+            tmp_setting[key] =tree_distributions[key][ind]
+            max_possible_combinations *= len(tree_distributions[key])
+    elif model_name == "Logistic Regression":
+        for key in regression_distributions:
+            ind = int(np.random.randint(0, len(regression_distributions[key])))
+            tmp_setting[key] =regression_distributions[key][ind]
+            max_possible_combinations *= len(regression_distributions[key])
+    elif model_name == "SVM":
+        for key in svm_distributions:
+            ind = int(np.random.randint(0, len(svm_distributions[key])))
+            tmp_setting[key] =svm_distributions[key][ind]
+            max_possible_combinations *= len(svm_distributions[key])
+    
+    if tmp_setting["ordinal_encoding"] == False:
+        if tmp_setting["genefamily"] == False:
+            if tmp_setting["onehot_encoding"] ==  False:
+                print("Warning: onehot_encoding and ordinal_encoding set to False...")
+                randomly_chosen = ["ordinal_encoding", "onehot_encoding"][np.random.randint(0, 2)]
+                tmp_setting[randomly_chosen] = True
+                print("Randomly set %s to true..." % randomly_chosen)
+    
+    if model_name == "Logistic Regression":
+        if tmp_setting["solver"] == "lbfgs":
+            if tmp_setting["regularization"] in ["elasticnet", "l1"]:
+                tmp_setting["solver"] = "saga"
+        
+        if ("lbfgs" in regression_distributions["solver"]) and ("elasticnet" in regression_distributions["regularization"]):
+            max_possible_combinations-= 1
+        if ("lbfgs" in regression_distributions["solver"]) and ("l1" in regression_distributions["regularization"]):
+            max_possible_combinations-= 1
+    
+    
+    if (False in general_distributions["ordinal_encoding"]) and (False in general_distributions["onehot_encoding"]) and (False in general_distributions["genefamily"]):
+        max_possible_combinations -= 1
+    
+    return tmp_setting, max_possible_combinations 
+
+
+def hyperopt_classical(iterations, model_name, selected_features, class_files, train_index, test_index, types, store_path=None):
     already_trained_settings = []
-    model_path = os.path.join(store_path ,"outputs_%s" % model_name)
+    model_path = os.path.join(store_path ,"outputs_%s" % model_name.replace(" ", ""))
     for path, subdirs, files in os.walk(model_path):
         for name in files:
             file = os.path.join(path, name)
@@ -474,35 +545,17 @@ def hyperopt_classical(iterations, model_name, selected_features, class_files, t
                     already_trained_settings.append(settings.copy())
 
     for n in tqdm(range(iterations)):
-        tmp_setting = dict()
-        for key in distributions:
-            ind = int(np.random.randint(0, len(distributions[key])))
-            tmp_setting[key] =distributions[key][ind]
-        if tmp_setting["ordinal_encoding"] == False:
-            if tmp_setting["genefamily"] == False:
-                if tmp_setting["onehot_encoding"] ==  False:
-                    print("Warning: onehot_encoding and ordinal_encoding set to False...")
-                    randomly_chosen = ["ordinal_encoding", "onehot_encoding"][np.random.randint(0, 2)]
-                    tmp_setting[randomly_chosen] = True
-                    print("Randomly set %s to true..." % randomly_chosen)
-        
+        tmp_setting, max_possible_combinations = sample_setting(model_name)
         if tmp_setting in already_trained_settings:
             print("Already trained a model with same setting configuration...")
             print("Resample tmp_setting...")
             while True:
-                tmp_setting = dict()
-                for key in distributions:
-                    ind = int(np.random.randint(0, len(distributions[key])))
-                    tmp_setting[key] =distributions[key][ind]
-                if tmp_setting["ordinal_encoding"] == False:
-                    if tmp_setting["genefamily"] == False:
-                        if tmp_setting["onehot_encoding"] ==  False:
-                            print("Warning: onehot_encoding and ordinal_encoding set to False...")
-                            randomly_chosen = ["ordinal_encoding", "onehot_encoding"][np.random.randint(0, 2)]
-                            tmp_setting[randomly_chosen] = True
-                            print("Randomly set %s to true..." % randomly_chosen)
+                tmp_setting, max_possible_combinations = sample_setting(model_name)
                 if tmp_setting not in already_trained_settings:
                     break    
+                if len(already_trained_settings) == max_possible_combinations:
+                    print("Exhausted parameter search...")
+                    return
         
         temp_selected_features = selected_features.copy()
         if tmp_setting["add_clonality"]:
@@ -516,7 +569,6 @@ def hyperopt_classical(iterations, model_name, selected_features, class_files, t
        
 
 def load_metadata(types, target_locus, path_dir):
-
     df_meta = pd.read_csv(os.path.join(path_dir, "lymphoma-reps-file-infos.csv"))
     class_files = {}
     n_classes = len(types)
@@ -614,7 +666,7 @@ def baseline(class_files, types, store_path = None):
 
 if __name__ == '__main__':
     path_dir = "immusign/data/"
-    store_path = "immusign/results_cll_dlbcl_hd/"
+    store_path = "immusign/final_evaluation/cll_dlbcl_hd/"
     comparisons = [['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd']]#[['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['unspecified'], ['nlphl'], ['thrlbcl'], ['lymphadenitis']]
     comparison_labels = ['cll', 'dlbcl', 'hd']#['cll', 'dlbcl', 'hd', 'unspecified','nlphl',  'thrlbcl', 'lymphadenitis']
 
@@ -625,8 +677,9 @@ if __name__ == '__main__':
 
     df_baseline, train_index, test_index = baseline(class_files, comparison_labels, store_path=store_path)
     selected_features = ['cloneFraction', 'lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)]
+    #selected_features = ['lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)]
     
-    models_to_train = ["Random Forest"]
+    models_to_train = []
     for model_name in models_to_train:
         already_trained_feature_combinations = []
         model_path = os.path.join(store_path ,"outputs_%s" % model_name.replace(" ", ""))
@@ -639,16 +692,18 @@ if __name__ == '__main__':
                         settings = settings.replace("\n", "").strip()
                         settings = json.loads(settings)
                         already_trained_feature_combinations.append(settings.copy())
-        for i in tqdm(range(100)):
+        for i in tqdm(range(500)):
                 ind = np.random.randint(0, 2, size=len(selected_features)).astype(bool)
                 selected_features_i = list(np.asarray(selected_features)[ind])
                 while selected_features_i in already_trained_feature_combinations:
                     ind = np.random.randint(0, 2, size=len(selected_features)).astype(bool)
                     selected_features_i = list(np.asarray(selected_features)[ind])                                 
-                hyperopt_classical(1, model_name, selected_features_i, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+                hyperopt_classical(50, model_name, selected_features_i, class_files, train_index, test_index, comparison_labels, store_path=store_path)
                 already_trained_feature_combinations.append(selected_features_i)
     
-    #hyperopt_classical(1, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+
+    #hyperopt_classical(36, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    hyperopt_classical(862, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
 
     score_to_choose_best = "mcc"
     best_score_test = -np.inf
