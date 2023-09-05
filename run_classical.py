@@ -340,7 +340,7 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
         elif model_name == "TabPFN":
             raise NotImplementedError
         elif model_name == "Logistic Regression":
-            model = LogisticRegression(max_iter=settings["max_iter"], penalty=settings['regularization'], C=settings['C'], solver=settings['solver'])
+            model = LogisticRegression(max_iter=settings["max_iter"], penalty=settings['regularization'], C=settings['C'], solver=settings['solver'], l1_ratio=settings["l1_ratio"])
         elif model_name == "SVM":
             model = SVC(max_iter=settings["max_iter"], kernel = settings["kernel"], C=settings["C"])
         return model
@@ -472,7 +472,8 @@ def sample_setting(model_name):
                         max_iter = [10000],
                         regularization = [None, 'l2', 'l1', 'elasticnet'],
                         C = [0.001, 0.01, 0.1, 1, 10, 100],
-                        solver = ["lbfgs", "saga"]
+                        solver = ["lbfgs", "saga"],
+                        l1_ratio= [0.5]
     )
 
     svm_distributions = dict(
