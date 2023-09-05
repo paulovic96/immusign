@@ -33,25 +33,22 @@ class Copier(object):
     def __call__(self, input_file_path):
         process_chunk(input_file_path, self.model)
 
-def main():
-    parser = argparse.ArgumentParser(description="Calculate generation probability for CDR3 sequences according to a generative V(D)J model. Input Table with 3 columns: sequence, Vgen, Jgen")
-    # Add arguments using add_argument method
-    parser.add_argument('--i', type=str, help='Input file')
-    parser.add_argument('--model', type=str, help='Model to use with Olga (e.g. humanIGH)')
+def compute_generation_probabilities_from_clone_files(clones_df, model):
+    olga_input_file = "Olga_input.tsv"
+    olga_df = clones_df[["CDR3.nucleotide.sequence", "bestVGene", "bestJGene"]].copy()
+    olga_df.rename(columns = {"CDR3.nucleotide.sequence": "V1", "bestVGene": "V2", "bestJGene": "V3"}, inplace = True)
+    olga_df.to_csv(olga_input_file, sep="\t", header=False, index=False)
 
+    run_olga(olga_input_file, model)
 
-    args = parser.parse_args()
-    if args.i:
-        input_file = args.i
-    else:
-        print("Please provide a valid input file...")
-    if args.model:
-        model = "--" + args.model
-    else:
-        print("Please prov a valid model specification...")
+    results = pd.read_csv(olga_input_file.replace("input", "output"), sep="\t", header=None)
+    df = clones_df.copy()
+    df.loc[olga_df.index, "olga_pgen_cdr3"] = list(results[1])
+    df.loc[olga_df.index, "olga_pgen_aa"] = list(results[3])
 
-
-
+    return df
+    
+def run_olga(input_file, model):
     df_to_chunk = pd.read_csv(input_file, sep='\t', header=None)
     num_processes = multiprocessing.cpu_count()  # Number of available CPU cores
     start_point = 0
@@ -70,11 +67,15 @@ def main():
             df_to_chunk.iloc[end_points[i-1]:end_point].to_csv(chunk_file_name % i, sep="\t", header=False, index=False)
         input_files.append(chunk_file_name % i)
 
-
     with multiprocessing.Pool(processes=num_processes) as pool:
         pool.map(Copier(model), input_files)
 
-    output_files = [i.replace("input", "output") for i in input_files]
+    if "input" in input_file:
+        output_files = [i.replace("input", "output") for i in input_files]
+        output_file = input_file.replace("input", "output")
+    else:
+        output_files = [i.split(".")[0]+ "_output.tsv"]
+        output_file = input_file.split(".")[0]+ "_output.tsv"
 
     results = []
     for o in output_files:
@@ -82,11 +83,30 @@ def main():
         results.append(olga_results_o)
 
     results = pd.concat(results)
-    results.to_csv(input_file.replace("input", "output"), sep="\t", header=False, index=False)
+    results.to_csv(output_file, sep="\t", header=False, index=False)
 
     for i,f in enumerate(input_files):
         os.remove(f)
         os.remove(output_files[i])
+
+def main():
+    parser = argparse.ArgumentParser(description="Calculate generation probability for CDR3 sequences according to a generative V(D)J model. Input Table with 3 columns: sequence, Vgen, Jgen")
+    # Add arguments using add_argument method
+    parser.add_argument('--i', type=str, help='Input file')
+    parser.add_argument('--model', type=str, help='Model to use with Olga (e.g. humanIGH)')
+
+
+    args = parser.parse_args()
+    if args.i:
+        input_file = args.i
+    else:
+        print("Please provide a valid input file...")
+    if args.model:
+        model = "--" + args.model
+    else:
+        print("Please prov a valid model specification...")
+
+    run_olga(input_file, model)
 
 if __name__ == "__main__":
     main()
