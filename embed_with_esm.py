@@ -16,6 +16,67 @@ tokenizer = EsmTokenizer.from_pretrained("facebook/esm2_t33_650M_UR50D")
 model = EsmModel.from_pretrained("facebook/esm2_t6_8M_UR50D")
 model.eval().to(device)
 
+def embed_aas_from_clone_files(clones_df):
+    aas = list(clones_df["aaSeqCDR3"])
+    output_file_path = "aa_cdr3_embeddings.pkl" 
+    aa_list = [aa.strip().replace("_","-").replace("*", "X") for aa in aas] # ESM gap, deletion = "-" or ".", stop_codon = "X"
+    embed_aas(aa_list, output_file_path, max_chunk_length=500)
+
+    results = pd.read_pickle("aa_cdr3_embeddings.pkl")
+    df = clones_df.copy()
+    df["esm_embedding"] = list(results["esm_embedding"])
+
+    return df
+
+def embed_aas(aa_list, output_file_path,max_chunk_length=500):
+    # sort aa length-wise
+    aa_lengths = [len(aa) for aa in aa_list] 
+    aa_list.sort(key=len) # sort by length()
+    aa_indices = np.argsort(aa_lengths)
+    
+    l, c = np.unique(aa_lengths, return_counts=True)
+    len_endpoints = np.cumsum(c)    
+
+
+    # chunk same size as to avoid padding 
+    aa_chunks = []
+    for i, p_end in enumerate(len_endpoints):    
+        if i == 0:
+            p_start = 0
+        else:
+            p_start = len_endpoints[i-1]    
+        if c[i] <= max_chunk_length:
+            aa_chunks.append(aa_list[p_start:p_end])
+        else:
+            n_max_chunks = c[i]//max_chunk_length
+            for _ in range(n_max_chunks):
+                aa_chunks.append(aa_list[p_start:(p_start + max_chunk_length)])
+                p_start += max_chunk_length
+            aa_chunks.append(aa_list[p_start:p_end])
+
+    store_embeddings = np.zeros((len(aa_list),320)) # hidden dim = 320
+    
+    i_start = 0
+    for aas in tqdm(aa_chunks):
+        inputs = tokenizer(aas, return_tensors="pt", padding=False, truncation=False).to(device)
+        with torch.no_grad():
+            outputs = model(**inputs)
+        last_hidden_states = outputs.last_hidden_state
+        x = last_hidden_states.detach()     
+        embedding = x[:,1:-1,:].mean(axis=1) # drop the initial beginning of sentence token and average to get embedding per protein
+        i_end = i_start + len(embedding)
+        store_embeddings[i_start:i_end,:] = embedding.to("cpu")
+        i_start = i_end
+
+    df_embed = pd.DataFrame()
+    df_embed["aa_cdr3"] = np.asarray(aa_list)[aa_indices]
+    df_embed["esm_embedding"] = list(store_embeddings[aa_indices,:])
+    if not output_file_path.endswith(".pkl"):
+        output_file_path += ".pkl"
+    df_embed.to_pickle(output_file_path)
+
+    #np.save(EMBEDDINGS_PATH, store_embeddings)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Embed AS-Sequences stored in a .txt file")
@@ -38,59 +99,11 @@ def main():
         MAX_CHUNK_LENGTH = args.max_chunk_length
     else:
         MAX_CHUNK_LENGTH = 500
-
-    
-        
-   
     
     if not os.path.exists(EMBEDDINGS_PATH):
         with open (AAS_PATH, "r") as file:
             aa_list = [line.strip().replace("_","-").replace("*", "X") for line in file] # ESM gap, deletion = "-" or ".", stop_codon = "X"
-        aa_lengths = [len(aa) for aa in aa_list]
-        aa_list.sort(key=len) # sort by length()
-        aa_indices = np.argsort(aa_lengths)
-        
-        l, c = np.unique(aa_lengths, return_counts=True)
-        len_endpoints = np.cumsum(c)    
-
-
-        # chunk same size as to avoid padding 
-        aa_chunks = []
-        for i, p_end in enumerate(len_endpoints):    
-            if i == 0:
-                p_start = 0
-            else:
-                p_start = len_endpoints[i-1]    
-            if c[i] <= MAX_CHUNK_LENGTH:
-                aa_chunks.append(aa_list[p_start:p_end])
-            else:
-                n_max_chunks = c[i]//MAX_CHUNK_LENGTH
-                for _ in range(n_max_chunks):
-                    aa_chunks.append(aa_list[p_start:(p_start + MAX_CHUNK_LENGTH)])
-                    p_start += MAX_CHUNK_LENGTH
-                aa_chunks.append(aa_list[p_start:p_end])
-
-        store_embeddings = np.zeros((len(aa_list),320)) # hidden dim = 320
-        
-        i_start = 0
-        for aas in tqdm(aa_chunks):
-            inputs = tokenizer(aas, return_tensors="pt", padding=False, truncation=False).to(device)
-            with torch.no_grad():
-                outputs = model(**inputs)
-            last_hidden_states = outputs.last_hidden_state
-            x = last_hidden_states.detach()     
-            embedding = x[:,1:-1,:].mean(axis=1) # drop the initial beginning of sentence token and average to get embedding per protein
-            i_end = i_start + len(embedding)
-            store_embeddings[i_start:i_end,:] = embedding.to("cpu")
-            i_start = i_end
-
-        df_embed = pd.DataFrame()
-        df_embed["aa_cdr3"] = np.asarray(aa_list)[aa_indices]
-        df_embed["esm_embedding"] = list(store_embeddings[aa_indices,:])
-        df_embed.to_pickle(EMBEDDINGS_PATH)
-
-        #np.save(EMBEDDINGS_PATH, store_embeddings)
-    
+        embed_aas(aa_list, output_file_path= EMBEDDINGS_PATH, max_chunk_length=MAX_CHUNK_LENGTH)
     else:
         print("Already existing Embedding: ",EMBEDDINGS_PATH)
     
