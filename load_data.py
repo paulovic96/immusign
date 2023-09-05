@@ -4,6 +4,8 @@ import os
 import utils
 import argparse
 import subprocess
+from parallel_olga import run_olga
+from embed_with_esm import embed_aas
 
 def main():
     #parser = argparse.ArgumentParser(description="Load Data from clones file folder")
@@ -121,8 +123,7 @@ def main():
                     olga_df_i.to_csv('Olga_input_tra.tsv', sep="\t", header=False, index=False)
                     olga_input_files.append("Olga_input_tra.tsv")
                 olga_dfs.append(olga_df_i)
-            
-            
+                    
         else:
             olga_input_files = "Olga_input.tsv"
             olga_df = df[["CDR3.nucleotide.sequence", "bestVGene", "bestJGene"]].copy()
@@ -136,19 +137,15 @@ def main():
         
         if isinstance(olga_input_files, list):
             for i, file in enumerate(olga_input_files):
-                arguments = ['--i %s' % file, '--model %s' % olga_model[i]]
-                command = ['python', script_path] + arguments
-                subprocess.run(command)
-            
+                run_olga(file, olga_model[i])
+
                 results_i = pd.read_csv(file.replace("input", "output"), sep="\t", header=None)
                 df.loc[olga_dfs[i].index, "olga_pgen_cdr3"] = list(results_i[1])
                 df.loc[olga_dfs[i].index, "olga_pgen_aa"] = list(results_i[3])
 
 
         else:
-            arguments = ['--i %s' % olga_input_files, '--model %s' % olga_model]
-            command = ['python', script_path] + arguments
-            subprocess.run(command)
+            run_olga(file, olga_model)
             
             results = pd.read_csv(olga_input_files.replace("input", "output"), sep="\t", header=None)
             df.loc[olga_df.index, "olga_pgen_cdr3"] = list(results[1])
@@ -159,19 +156,10 @@ def main():
     else:
         print("Skipping calculation of generation probabilities...")
 
-    calcuate_embedding = input("Do you want to use the pretrained ESM to embed AA-sequences=? [y/n]")
-    if calcuate_embedding.lower() == "y" or calculate_embedding.lower() == "yes":
-        file_path_aa = "aa_cdr3.txt"
+    calculate_embedding = input("Do you want to use the pretrained ESM to embed AA-sequences=? [y/n]")
+    if calculate_embedding.lower() == "y" or calculate_embedding.lower() == "yes":
         aas = list(df["aaSeqCDR3"])
-        with open(file_path_aa, "w") as file:
-            for aa in aas:
-                file.write(aa + "\n")
-        
-        script_path = 'embed_with_esm.py'
-        arguments = ['--i %s' % "aa_cdr3.txt"]
-        command = ['python', script_path] + arguments
-        subprocess.run(command)
-            
+        embed_aas(aas, "aa_cdr3_embeddings.pkl" ,max_chunk_length=500)   
         results = pd.read_csv("aa_cdr3_embeddings.pkl")
         df["esm_embedding"] = list(results["esm_embedding"])
         df.to_pickle(output_file)
