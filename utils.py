@@ -36,6 +36,17 @@ amino_acids = ['R', 'H', 'K', 'D', 'E', 'S', 'T', 'N', 'Q', 'C',
 
 nSeq_look_up_dict = {"A": [1,0,0,0], "C" : [0,1,0,0], "G" : [0,0,1,0], "T" : [0,0,0,1]}
 
+contaminated_hds = ['105-D28-Ig-gDNA-PB-Nuray-A250_S180.clones.txt',
+ '108-D0-Ig-gDNA-PB-Nuray-A250_S185.clones.txt',
+ '109-D0-Ig-gDNA-PB-Nuray-A250_S187.clones.txt',
+ 'Barbara-hs-IGH-Zeller-1-HD-PB-gDNA_S140.clones.txt',
+ 'Barbara-hs-IGH-Zeller-110-HD-PB-gDNA_S148.clones.txt',
+ 'Christoph-hs-IGH-HD078-PB-gDNA-HLA-DRB1-AIH2-liver-gDNA_S255.clones.txt',
+ 'ChristophS-hs-IGH-HD078-31-01-2017-gDNA_S126.clones.txt',
+ 'HD-078-IGH-Dona_S52.clones.txt',
+ 'HD-Mix2-250ng-10hoch6-FR1-Ig-Anna-m-binder-A250_S95.clones.txt',
+ 'HD-Mix2-250ng-200000-FR1-Ig-Anna-m-binder-A250_S97.clones.txt']
+
 def normalize_values(array_to_norm):
     stds = np.std(array_to_norm)
     means = np.mean(array_to_norm)
