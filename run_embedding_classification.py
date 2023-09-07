@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 import os
 import json
 import utils
+from utils import get_clonset_info
 import time
 import random
 import string
@@ -31,54 +32,6 @@ contaminated_hds = ['105-D28-Ig-gDNA-PB-Nuray-A250_S180.clones.txt',
  'HD-078-IGH-Dona_S52.clones.txt',
  'HD-Mix2-250ng-10hoch6-FR1-Ig-Anna-m-binder-A250_S95.clones.txt',
  'HD-Mix2-250ng-200000-FR1-Ig-Anna-m-binder-A250_S97.clones.txt']
-
-def get_clonset_info(rep, method, quant="proportion"):
-    """
-    chao1:  Non-parametric estimation of the number of classes in a population: Sest = Sobs + ((F2 / 2G + 1) - (FG / 2 (G + 1) 2))
-            Sets = number classes
-            Sobs = number classes observed in sample
-            F = number singeltons (only one individual in class)
-            G = number doubletons (exactly two individuals in class)
-
-    gini index:  'inequality' among clonotypes. 0 for equal distribution and 1 for total unequal dstribution only 1 clone in set
-    
-    simpson: Probability  that two random clones belong to the same clone type
-
-    inv_simpson: 1 / simpson
-
-    shannon:  Distribution of clones within a repertoire. Quotient between Shannon-Index and max Shannon-Index (all clones equal distributed) is called Evenness. 
-
-    clonality: 1-evenness. 1 being a repertoire consisting of only one clone and 0 being a repertoire of maximal evennes (every clone in the repertoire was present at the same frequency).
-    """
-    n_aa_clones = len(rep["aaSeqCDR3"].unique())
-    if quant == "count":
-        counts = np.asarray(rep["cloneCount"])
-    elif quant == "proportion":
-        counts = np.asarray(rep["cloneFraction"])
-
-    if method == "chao1":
-        info = skbio.diversity.alpha.chao1(counts, bias_corrected=True)
-    elif method == "gini":
-        info = skbio.diversity.alpha.gini_index(counts, method='rectangles')
-    elif method == "simpson":
-        info = skbio.diversity.alpha.simpson(counts)
-    elif method == "inv_simpson":
-        info = skbio.diversity.alpha.enspie(counts)
-    elif method == "shannon":
-        info = skbio.diversity.alpha.shannon(counts, base=2)
-    elif method == "clonality":
-        hmax = np.log2(n_aa_clones)
-        shannon = skbio.diversity.alpha.shannon(counts, base=2)
-        if hmax == 0 or shannon==0:
-            eveness = 0 
-        else:
-            eveness = shannon/hmax
-        info = 1-eveness
-        if np.isnan(info) or np.isinf(info):
-            info = 1
-
-    return info
-
 
 def _run_name(model_type):
     return time.strftime("output_%b_%d_%H%M%S_") + ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(5)) +  "_%s" %model_type
