@@ -340,7 +340,7 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
         elif model_name == "TabPFN":
             raise NotImplementedError
         elif model_name == "Logistic Regression":
-            model = LogisticRegression(max_iter=settings["max_iter"], penalty=settings['regularization'], C=settings['C'], solver=settings['solver'], l1_ratio=settings["l1_ratio"])
+            model = LogisticRegression(max_iter=settings["max_iter"], penalty=settings['regularization'], C=settings['C'], solver=settings['solver'], l1_ratio=settings["l1_ratio"], n_jobs=8)
         elif model_name == "SVM":
             model = SVC(max_iter=settings["max_iter"], kernel = settings["kernel"], C=settings["C"])
         return model
@@ -453,7 +453,7 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
 def sample_setting(model_name):
     general_distributions = dict(
                         n_splits= [3],
-                        n_clones = [1, 2, 3, 4, 5, 10, 50, 100, 1000], #[1, 3, 5, 10, 20, 50],
+                        n_clones = [1000],
                         genefamily = [False],
                         standardize = [True, False], #[False, True],
                         ordinal_encoding = [False], #[False, True],
@@ -465,19 +465,19 @@ def sample_setting(model_name):
     
     tree_distributions = dict(
                         n_estimators = [200, 800], #[100, 200, 400, 800], #[100, 200, 400, 800],
-                        max_depth=[16], #[3, 6, 8, 16],
+                        max_depth=[8,16], #[3, 6, 8, 16],
     )
 
     regression_distributions = dict(
-                        max_iter = [10000],
-                        regularization = [None, 'l2', 'l1', 'elasticnet'],
-                        C = [0.001, 0.01, 0.1, 1, 10, 100],
-                        solver = ["lbfgs", "saga"],
+                        max_iter = [100000],
+                        regularization = ['l2', 'l1'], #[None, 'l2', 'l1', 'elasticnet'],
+                        C = [0.01, 0.1, 1, 10],
+                        solver = ["lbfgs","saga"], #["lbfgs", "saga"],
                         l1_ratio= [0.5]
     )
 
     svm_distributions = dict(
-                        max_iter = [10000],
+                        max_iter = [5000],
                         kernel = ['rbf'],
                         C = [0.001, 0.01, 0.1, 1, 10, 100],
     )
@@ -500,7 +500,8 @@ def sample_setting(model_name):
         for key in regression_distributions:
             ind = int(np.random.randint(0, len(regression_distributions[key])))
             tmp_setting[key] =regression_distributions[key][ind]
-            max_possible_combinations *= len(regression_distributions[key])
+            if not key == "solver":
+                max_possible_combinations *= len(regression_distributions[key])
     elif model_name == "SVM":
         for key in svm_distributions:
             ind = int(np.random.randint(0, len(svm_distributions[key])))
@@ -516,14 +517,10 @@ def sample_setting(model_name):
                 print("Randomly set %s to true..." % randomly_chosen)
     
     if model_name == "Logistic Regression":
-        if tmp_setting["solver"] == "lbfgs":
-            if tmp_setting["regularization"] in ["elasticnet", "l1"]:
-                tmp_setting["solver"] = "saga"
-        
-        if ("lbfgs" in regression_distributions["solver"]) and ("elasticnet" in regression_distributions["regularization"]):
-            max_possible_combinations-= 1
-        if ("lbfgs" in regression_distributions["solver"]) and ("l1" in regression_distributions["regularization"]):
-            max_possible_combinations-= 1
+        if tmp_setting["regularization"] in ["elasticnet", "l1"]:
+            tmp_setting["solver"] = "saga"         
+        else:
+            tmp_setting["solver"] = "lbfgs"         
     
     
     if (False in general_distributions["ordinal_encoding"]) and (False in general_distributions["onehot_encoding"]) and (False in general_distributions["genefamily"]):
@@ -554,9 +551,10 @@ def hyperopt_classical(iterations, model_name, selected_features, class_files, t
                 tmp_setting, max_possible_combinations = sample_setting(model_name)
                 if tmp_setting not in already_trained_settings:
                     break    
-                if len(already_trained_settings) == max_possible_combinations:
-                    print("Exhausted parameter search...")
-                    return
+                #if len(already_trained_settings) >= max_possible_combinations:
+                #    print("Exhausted parameter search...")
+                #    return
+        
         
         temp_selected_features = selected_features.copy()
         if tmp_setting["add_clonality"]:
@@ -567,7 +565,7 @@ def hyperopt_classical(iterations, model_name, selected_features, class_files, t
             temp_selected_features += ["richness"]
 
         main(model_name, tmp_setting, temp_selected_features, class_files, train_index, test_index, types, store_path)
-       
+        already_trained_settings.append(tmp_setting)
 
 def load_metadata(types, target_locus, path_dir):
     df_meta = pd.read_csv(os.path.join(path_dir, "lymphoma-reps-file-infos.csv"))
@@ -667,9 +665,9 @@ def baseline(class_files, types, store_path = None):
 
 if __name__ == '__main__':
     path_dir = "immusign/data/"
-    store_path = "immusign/final_evaluation/cll_dlbcl_hd/"
-    comparisons = [['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd']]#[['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['unspecified'], ['nlphl'], ['thrlbcl'], ['lymphadenitis']]
-    comparison_labels = ['cll', 'dlbcl', 'hd']#['cll', 'dlbcl', 'hd', 'unspecified','nlphl',  'thrlbcl', 'lymphadenitis']
+    store_path = "immusign/final_evaluation/nlphl_dlbcl_hd/"
+    comparisons = [['nlphl'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd']]#[['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['unspecified'], ['nlphl'], ['thrlbcl'], ['lymphadenitis']]
+    comparison_labels = ['nlphl', 'dlbcl', 'hd']#['cll', 'dlbcl', 'hd', 'unspecified','nlphl',  'thrlbcl', 'lymphadenitis']
 
     #'unspecified', 'dlbcl', 'nlphl', 'abc_dlbcl', 'thrlbcl', 'lymphadenitis', hd
     
@@ -704,7 +702,7 @@ if __name__ == '__main__':
     
 
     #hyperopt_classical(36, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
-    hyperopt_classical(862, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    hyperopt_classical(32, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
 
     score_to_choose_best = "mcc"
     best_score_test = -np.inf
