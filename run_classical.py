@@ -17,6 +17,8 @@ from catboost import CatBoostClassifier
 import lightgbm
 import warnings
 from utils import get_clonset_info
+from networks import DeepSetClassifier
+from sklearn.metrics import confusion_matrix
 warnings.filterwarnings("ignore")
 np.random.seed(42)
 random.seed(42)
@@ -117,13 +119,14 @@ def _run_name(model_type):
 def _custom_combiner(feature, category):
     return str(feature) + "_" + str(category)
 
-def read_feature(files, features , n_entries, flatten=True):
+def read_feature(files, features , n_entries, flatten=True, return_filenames=False):
     """
      This method creates a feature vector for each repertoire by concatenating the given set of features 
      for the most n_entries frequent clones and concatenates them.
     """
     data = []
     cloneFraction = []
+    filenames = []
 
     read_features = features.copy()
     for i, file in enumerate(files):
@@ -189,7 +192,11 @@ def read_feature(files, features , n_entries, flatten=True):
                 
             except NameError: 
                 data.append(d)
+        filenames.append([file]* len(df))
     data = np.stack(data, axis=0)
+    if return_filenames:
+        return data, cloneFraction, filenames
+
     return data, cloneFraction
 
 def scaler_range(X, feature_range=(-1, 1), min_x=None, max_x=None):
@@ -205,7 +212,7 @@ def scaler_range(X, feature_range=(-1, 1), min_x=None, max_x=None):
     X_scaled[X_scaleable.columns] = X_scaleable
     return X_scaled, min_x, max_x
 
-def create_features(class_files, feature_names, object_types, n_entries=5, onehot_encoding=False, ordinal_encoding=False, standardize=False, flatten=True, genefamily=True):
+def create_features(class_files, feature_names, object_types, n_entries=5, onehot_encoding=False, ordinal_encoding=False, standardize=False, flatten=True, genefamily=True, return_filenames=False):
     # create feature names for each clone
     column_names = []
     column_to_features = {}
@@ -234,9 +241,15 @@ def create_features(class_files, feature_names, object_types, n_entries=5, oneho
     X = []
     clone_fractions = []
     y = []
+    filenames = []
+
     for i, type in enumerate(class_files.keys()):
         #print("Read feature for class %i" %i)
-        X_type, cf_type = read_feature(class_files[type], feature_names, n_entries, flatten=flatten)
+        if return_filenames:
+            X_type, cf_type, filenames_type = read_feature(class_files[type], feature_names, n_entries, flatten=flatten, return_filenames=return_filenames)
+            filenames.append(filenames_type)
+        else:
+            X_type, cf_type = read_feature(class_files[type], feature_names, n_entries, flatten=flatten)
         y_type = [int(type)] * len(X_type)
         X.append(X_type)
         y.extend(y_type)
@@ -274,12 +287,85 @@ def create_features(class_files, feature_names, object_types, n_entries=5, oneho
             encoded_categorical_cols.set_index(X.index, inplace=True)
             X.drop(columns=categorical_cols,inplace=True)
             X = pd.concat([X,encoded_categorical_cols], axis=1)
+            
     
     if standardize:
         X = scaler_range(X)[0]
-   
+    
+    if return_filenames:
+        return X, y, clone_fractions, filenames
 
     return X, y, clone_fractions
+
+def read_features_deep(class_files, selected_features, scale=False, max_clones = 10000, genefamily=True, return_filenames=False):
+
+    # read gene2index mapping
+    if genefamily:
+        with open("immusign/data/gene2index_family.json", "r") as infile:
+            gene2index = json.load(infile)
+    else:
+        with open("immusign/data/gene2index.json", "r") as infile:
+            gene2index = json.load(infile)
+
+    X = []
+    y = []
+    filenames = []
+    clone_fractions = []
+
+    features_max = []
+    features_min = []
+
+    for i, type in enumerate(class_files.keys()):
+        for j, file in enumerate(class_files[type]):
+            print("File %s" % file)
+            df = pd.read_csv("immusign/data/clones_mit_kidera/%s" % file, sep="\t")
+            df = df[df['cloneFraction'].apply(lambda x: isinstance(x, (int, float)))]
+
+            if (df.shape[0] == 0):
+                continue
+            clone_fractions.append(df['cloneFraction'].values[0])
+
+            if "clonality" in selected_features:
+                df["clonality"] = get_clonset_info(df, "clonality")
+            if "shannon" in selected_features:
+                df["shannon"] = get_clonset_info(df, "shannon")
+            if "richness" in selected_features:
+                df["richness"] = get_clonset_info(df, "aminoacid_clones")
+    
+            # encode v,d,j genes to indices
+            df["bestVGene"] = df["bestVGene"].apply(lambda x: gene2index[str(x)] if str(x) in gene2index else -1)
+            df["bestDGene"] = df["bestDGene"].apply(lambda x: gene2index[str(x)] if str(x) in gene2index else -1)
+            df["bestJGene"] = df["bestJGene"].apply(lambda x: gene2index[str(x)] if str(x) in gene2index else -1)
+            
+            features_max.append(np.max(df.iloc[:max_clones][selected_features], axis=0))
+            features_min.append(np.min(df.iloc[:max_clones][selected_features], axis=0))
+
+            #features = df.iloc[:max_entries][selected_features].values.flatten()#.reshape(1, -1)
+            
+            X.append(df)
+            filenames.append([file]* len(df))
+            y.append(i)
+
+    if scale:
+        # get total min and max and apply z-scaling
+        features_max = np.max(features_max, axis=0)
+        features_min = np.min(features_min, axis=0)
+
+        X_scaled = []
+        for i, x in enumerate(X):
+            tmp = x.iloc[:max_clones][selected_features]
+            tmp = (tmp - features_min) / (features_max - features_min)
+            X_scaled.append(tmp.values.flatten())
+
+        X = X_scaled
+    if return_filenames:
+        return X, y, clone_fractions, filenames
+    return X, y, clone_fractions
+
+
+
+
+
 
 def main(model_name,settings, selected_features, class_files, train_index, test_index, types, store_path=None):
 
@@ -304,7 +390,13 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
         
     selected_object_types = [feature_dict[feature] for feature in selected_features]
 
-    X, y, clone_fractions = create_features(class_files, selected_features, selected_object_types, settings["n_clones"], onehot_encoding=settings["onehot_encoding"], ordinal_encoding=settings["ordinal_encoding"], standardize=settings["standardize"], genefamily=settings["genefamily"])
+    if model_name == "AttentionDeepSets":
+        X, y, clone_fractions = read_features_deep(class_files, selected_features, scale=True, max_clones = settings["n_clones"], genefamily=settings["genefamily"])
+        X = pd.Series(X)
+        y = np.array(y)
+        clone_fractions = np.array(clone_fractions)
+    else:
+        X, y, clone_fractions = create_features(class_files, selected_features, selected_object_types, settings["n_clones"], onehot_encoding=settings["onehot_encoding"], ordinal_encoding=settings["ordinal_encoding"], standardize=settings["standardize"], genefamily=settings["genefamily"])
     
     if model_name == "CatBoost":
         categorical_cols = X.columns[X.dtypes == 'category']
@@ -324,6 +416,7 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
     accuracies = []
     recalls = []
     precisions = []
+    specificitys = []
     roc_aucs = []
     mccs = []
     masked_dlbcl_accuracies = []
@@ -343,6 +436,10 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
             model = LogisticRegression(max_iter=settings["max_iter"], penalty=settings['regularization'], C=settings['C'], solver=settings['solver'], l1_ratio=settings["l1_ratio"], n_jobs=8)
         elif model_name == "SVM":
             model = SVC(max_iter=settings["max_iter"], kernel = settings["kernel"], C=settings["C"])
+        elif model_name == 'AttentionDeepSets':
+            model = DeepSetClassifier(params=settings)
+        else:
+            raise NotImplementedError
         return model
 
     for k, (train, val) in enumerate(k_fold.split(X, y)):
@@ -363,6 +460,24 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
         roc_aucs.append(roc_auc_score(y_val, y_pred) if len(np.unique(y)) == 2 else np.nan)
         mccs.append(matthews_corrcoef(y_val, y_pred))
 
+        # compute specificity
+        if len(np.unique(y)) == 2:
+            tn, fp, fn, tp = confusion_matrix(y_val, y_pred).ravel()
+            s = tn / (tn+fp)
+        else:
+            conf_matrix = confusion_matrix(y_val, y_pred)
+            num_classes = conf_matrix.shape[0]
+            specificitys = []
+            for i in range(num_classes):
+                TP = conf_matrix[i, i]
+                FN = np.sum(conf_matrix[i, :]) - TP
+                FP = np.sum(conf_matrix[:, i]) - TP
+                TN = np.sum(conf_matrix) - TP - FN - FP
+                s = TN / (TN+FP)
+                
+            support = np.sum(conf_matrix, axis=1)
+            s = np.average(specificitys, weights=support)
+
         low_cf = np.array([1 if ((clone_fractions[val][i] < 0.2) & (y_val[i] == 1)) else 0 for i in range(len(y_val))])
         low_mask = (low_cf== 1)
         if len(y_val[low_mask]) == 0:
@@ -373,7 +488,7 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
                                 recall_score(y_val[low_mask],y_pred[low_mask], average='binary' if len(np.unique(y)) == 2 else 'weighted', zero_division=0.0)])
 
 
-    performance_df = pd.DataFrame({'accuracy': accuracies, 'recall': recalls, 'precision': precisions, 'roc_auc': roc_aucs, 'mcc' : mccs})
+    performance_df = pd.DataFrame({'accuracy': accuracies, 'recall': recalls, 'precision': precisions, 'roc_auc': roc_aucs, 'mcc' : mccs, 'specificity': specificitys})
   
     # store in storedir
     masked_scores = pd.DataFrame(columns=["low_dlbcl_accuracy", "low_dlbcl_precision", "low_dlbcl_recall"], data = masked_dlbcl_accuracies)
@@ -387,9 +502,31 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
     # add performance on test set with Dataset 'Test'
     model = get_model(model_name, settings)
     model.fit(X, y)
+    if model_name == 'AttentionDeepSets':
+        model.save(os.path.join(store_dir, "model.pkl"))
 
     y_pred = model.predict(X_test)
     performance_df_test = pd.DataFrame({'accuracy': [accuracy_score(y_test, y_pred)], 'recall': [recall_score(y_test, y_pred, average='binary' if len(np.unique(y)) == 2 else 'weighted', zero_division=0.0)], 'precision': [precision_score(y_test, y_pred, average='binary' if len(np.unique(y)) == 2 else 'weighted', zero_division=0.0)], 'roc_auc': [roc_auc_score(y_test, y_pred) if len(np.unique(y)) == 2 else np.nan], 'mcc' : [matthews_corrcoef(y_test, y_pred)]})
+    # add specificity
+    if len(np.unique(y)) == 2:
+        tn, fp, fn, tp = confusion_matrix(y_test, y_pred).ravel()
+        s = tn / (tn+fp)
+    else:
+        conf_matrix = confusion_matrix(y_test, y_pred)
+        num_classes = conf_matrix.shape[0]
+        specificitys = []
+        for i in range(num_classes):
+            TP = conf_matrix[i, i]
+            FN = np.sum(conf_matrix[i, :]) - TP
+            FP = np.sum(conf_matrix[:, i]) - TP
+            TN = np.sum(conf_matrix) - TP - FN - FP
+            s = TN / (TN+FP)
+            
+        support = np.sum(conf_matrix, axis=1)
+        s = np.average(specificitys, weights=support)
+
+
+    performance_df_test["specificity"] = s
     performance_df_test["Model"] = model_name
     performance_df_test["Dataset"] = 'Test'
 
@@ -450,10 +587,30 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
     except:     
         print("Feature Importance not available for model: %s" % model_name)
 
+def infer(model_name, model_path, settings, selected_features, class_files, test_index, experiment="results/deepsets"):
+
+    
+    with open(os.path.join(model_path, "settings.json"), 'w') as outfile:
+        json.dump(settings, outfile, indent=2)
+
+    X, y, clone_fractions = read_features_deep(class_files, selected_features, scale=True, max_clones = settings["n_clones"], genefamily=settings["genefamily"] if "genefamily" in settings else False)
+    X = np.array(X)
+    y = np.array(y)
+    clone_fractions = np.array(clone_fractions)
+
+    X_test = X[test_index]
+    y_test = y[test_index]
+    clone_fractions_test = clone_fractions[test_index]
+      
+    model.load(os.path.join(model_path, "model.pkl"))
+
+    return X, y, X_test, y_test, model
+
+
 def sample_setting(model_name):
     general_distributions = dict(
                         n_splits= [3],
-                        n_clones = [1000],
+                        n_clones=[1000, 5000],
                         genefamily = [False],
                         standardize = [True, False], #[False, True],
                         ordinal_encoding = [False], #[False, True],
@@ -482,6 +639,22 @@ def sample_setting(model_name):
                         C = [0.001, 0.01, 0.1, 1, 10, 100],
     )
 
+    deepset_distributions = dict(
+        var_input_dim=[17],
+        batch_size=[64],
+        phi_hidden_dim=[64],
+        phi_output_dim=[128, 512, 1024],
+        rho_hidden_dim=[64, 128],
+        rho_output_dim=[2],
+        attention_dim=[16,64, 128], # only for simple and scaled dot product
+        #attention_dim = [None],
+        attention_type=["simple"],#["simple", "scaled_dot_product"],cross_attention
+        epochs=[3000],
+        learning_rate=[0.001, 0.0001],
+        dropout = [None, 0.1, 0.2]
+    )
+
+
     tree_models = ["Random Forest", "XGBoost", "LightGBM", "CatBoost"]
     
     max_possible_combinations = 1
@@ -507,6 +680,12 @@ def sample_setting(model_name):
             ind = int(np.random.randint(0, len(svm_distributions[key])))
             tmp_setting[key] =svm_distributions[key][ind]
             max_possible_combinations *= len(svm_distributions[key])
+    
+    elif model_name == "AttentionDeepSets":
+        for key in deepset_distributions:
+            ind = int(np.random.randint(0, len(deepset_distributions[key])))
+            tmp_setting[key] =deepset_distributions[key][ind]
+            max_possible_combinations *= len(deepset_distributions[key])
     
     if tmp_setting["ordinal_encoding"] == False:
         if tmp_setting["genefamily"] == False:
@@ -665,7 +844,7 @@ def baseline(class_files, types, store_path = None):
 
 if __name__ == '__main__':
     path_dir = "immusign/data/"
-    store_path = "immusign/final_evaluation/nlphl_dlbcl_hd/"
+    store_path = "immusign/final_evaluation/deepset/nlphl_dlbcl_hd/"
     comparisons = [['nlphl'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd']]#[['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['unspecified'], ['nlphl'], ['thrlbcl'], ['lymphadenitis']]
     comparison_labels = ['nlphl', 'dlbcl', 'hd']#['cll', 'dlbcl', 'hd', 'unspecified','nlphl',  'thrlbcl', 'lymphadenitis']
 
@@ -702,7 +881,7 @@ if __name__ == '__main__':
     
 
     #hyperopt_classical(36, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
-    hyperopt_classical(32, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    hyperopt_classical(1, "AttentionDeepSets", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
 
     score_to_choose_best = "mcc"
     best_score_test = -np.inf
