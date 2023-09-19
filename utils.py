@@ -45,7 +45,8 @@ contaminated_hds = ['105-D28-Ig-gDNA-PB-Nuray-A250_S180.clones.txt',
  'ChristophS-hs-IGH-HD078-31-01-2017-gDNA_S126.clones.txt',
  'HD-078-IGH-Dona_S52.clones.txt',
  'HD-Mix2-250ng-10hoch6-FR1-Ig-Anna-m-binder-A250_S95.clones.txt',
- 'HD-Mix2-250ng-200000-FR1-Ig-Anna-m-binder-A250_S97.clones.txt']
+ 'HD-Mix2-250ng-200000-FR1-Ig-Anna-m-binder-A250_S97.clones.txt',
+ 'Christoph-hs-IGH-HD141-gDNA_S119.clones.txt']
 
 def normalize_values(array_to_norm):
     stds = np.std(array_to_norm)
@@ -125,6 +126,10 @@ def get_clonset_info(rep, method, quant="cloneFraction"):
         info = n_aa_clones
     
     return info
+
+def calculate_hypermutation(rep, threshold = 0.98):
+    hyper_mutation = np.sum(rep.vBestIdentityPercent < threshold)/len(rep)
+    return hyper_mutation
 
 def read_clones_txt(files, clones_txt_dict=None, normalize_read_count = None):
     """
@@ -599,3 +604,5 @@ def txt_to_fasta(input_file, output_file):
             aa_seq = line
             fasta_string = f">{header}\n{aa_seq}\n"
             fasta_file.write(fasta_string)
+
+
