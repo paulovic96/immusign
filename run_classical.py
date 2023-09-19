@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 import random, time, string
 import pandas as pd
 from sklearn.preprocessing import OrdinalEncoder, OneHotEncoder
+from imblearn.over_sampling import ADASYN, RandomOverSampler, SMOTE
+from imblearn.under_sampling import RandomUnderSampler
 import json
 from tqdm import tqdm
 from sklearn.ensemble import RandomForestClassifier
@@ -33,9 +35,8 @@ contaminated_hds = ['105-D28-Ig-gDNA-PB-Nuray-A250_S180.clones.txt',
  'ChristophS-hs-IGH-HD078-31-01-2017-gDNA_S126.clones.txt',
  'HD-078-IGH-Dona_S52.clones.txt',
  'HD-Mix2-250ng-10hoch6-FR1-Ig-Anna-m-binder-A250_S95.clones.txt',
- 'HD-Mix2-250ng-200000-FR1-Ig-Anna-m-binder-A250_S97.clones.txt']
-
-
+ 'HD-Mix2-250ng-200000-FR1-Ig-Anna-m-binder-A250_S97.clones.txt',
+ 'Christoph-hs-IGH-HD141-gDNA_S119.clones.txt']
 
 def create_vdj_index(class_files, family = False):
     
@@ -194,6 +195,7 @@ def read_feature(files, features , n_entries, flatten=True, return_filenames=Fal
                 data.append(d)
         filenames.append([file]* len(df))
     data = np.stack(data, axis=0)
+
     if return_filenames:
         return data, cloneFraction, filenames
 
@@ -258,7 +260,12 @@ def create_features(class_files, feature_names, object_types, n_entries=5, oneho
     X = pd.DataFrame(X, columns=column_names)
     for i, feature in enumerate(column_names):
         X[feature] = X[feature].astype(column_to_type[feature])
-    X = X.fillna('nan')
+        if column_to_type[feature] == 'object':
+             X[feature] = X[feature].fillna('nan')
+             X[feature] = X[feature].replace(0, 'nan')
+        else:
+            X[feature] = X[feature].fillna(0.0)
+   
     for col in X.select_dtypes(include=['object']):
         X[col] = X[col].astype('category')
     y = np.array(y)
@@ -364,9 +371,6 @@ def read_features_deep(class_files, selected_features, scale=False, max_clones =
 
 
 
-
-
-
 def main(model_name,settings, selected_features, class_files, train_index, test_index, types, store_path=None):
 
     print("Start %s training..." %model_name)
@@ -401,6 +405,7 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
     if model_name == "CatBoost":
         categorical_cols = X.columns[X.dtypes == 'category']
         X[categorical_cols] = X[categorical_cols].astype('int64')
+    
 
     X_test = X.iloc[test_index]
     y_test = y[test_index]
@@ -410,7 +415,7 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
     y = y[train_index]
     clone_fractions = clone_fractions[train_index]
     
-    k_fold = StratifiedKFold(n_splits=settings["n_splits"], shuffle=True, random_state=15)
+    k_fold = StratifiedKFold(n_splits=settings["n_splits"], shuffle=True, random_state=42)
 
     # init accuracy, recall, precision, roc_auc, mcc for validation set in one dict
     accuracies = []
@@ -441,14 +446,36 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
         else:
             raise NotImplementedError
         return model
+    
+    sampling_strategies = {
+    'None': None,
+    'adasyn': ADASYN(random_state=42),
+    'random_over': RandomOverSampler(random_state=42),
+    'smote': SMOTE(random_state=42),
+    'random_under' : RandomUnderSampler(random_state=42)
+    }
+    
+    
+    sampler = sampling_strategies[settings["sampler"]]
 
     for k, (train, val) in enumerate(k_fold.split(X, y)):
       
         X_train, y_train = X.iloc[train], y[train]
         X_val, y_val = X.iloc[val], y[val]
 
+        if sampler is not None:
+            X_train, y_train = sampler.fit_resample(X_train, y_train)
+            """for i, feature in enumerate(X_train.columns):
+                feature_name = feature.split("_")[0]
+                if feature_dict[feature_name] == 'object':
+                    X_train[feature] = X_train[feature].fillna('nan')
+                    X_train[feature] = X_train[feature].replace(0, 'nan')
+                else:
+                    X_train[feature] = X_train[feature].fillna(0.0)
+            """
+        
         model = get_model(model_name, settings)
-        model.fit(X_train, y_train)
+        model.fit(X_train.values, y_train)
 
         # Make predictions on the test data
         y_pred = model.predict(X_val)
@@ -467,16 +494,18 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
         else:
             conf_matrix = confusion_matrix(y_val, y_pred)
             num_classes = conf_matrix.shape[0]
-            specificitys = []
+            ss = []
             for i in range(num_classes):
                 TP = conf_matrix[i, i]
                 FN = np.sum(conf_matrix[i, :]) - TP
                 FP = np.sum(conf_matrix[:, i]) - TP
                 TN = np.sum(conf_matrix) - TP - FN - FP
                 s = TN / (TN+FP)
+                ss.append(s)
                 
             support = np.sum(conf_matrix, axis=1)
-            s = np.average(specificitys, weights=support)
+            s = np.average(ss, weights=support)
+        specificitys.append(s)
 
         low_cf = np.array([1 if ((clone_fractions[val][i] < 0.2) & (y_val[i] == 1)) else 0 for i in range(len(y_val))])
         low_mask = (low_cf== 1)
@@ -486,6 +515,30 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
             masked_dlbcl_accuracies.append([accuracy_score(y_val[low_mask],y_pred[low_mask] ), 
                                 precision_score(y_val[low_mask],y_pred[low_mask] , average='binary' if len(np.unique(y)) == 2 else 'weighted', zero_division=0.0), 
                                 recall_score(y_val[low_mask],y_pred[low_mask], average='binary' if len(np.unique(y)) == 2 else 'weighted', zero_division=0.0)])
+        
+        with open(os.path.join(store_dir,'valid_scores_%d.txt' % k), 'w') as f:
+            digits = 2
+            width = len("weighted avg")
+            row_fmt_mcc = (
+                        "{:>{width}s} "
+                        + " {:>9.{digits}}" * 2
+                        + " {:>9.{digits}f}"
+                        + " {:>9.{digits}}\n"
+                    )
+            f.write("%s Validation Scores\n" % model_name)
+            f.write(classification_report(y_val, y_pred, target_names=np.asarray(types), zero_division=0))  
+            mcc = matthews_corrcoef(y_val, y_pred)
+            f.write(row_fmt_mcc.format("mcc", "", "", mcc, "", width=width, digits=digits))  
+            f.write("\n\n") 
+            f.write("Low dlbcl Scores\n")    
+
+            if model_name == "CatBoost":
+                target_labels = np.unique(np.concatenate([y_val[low_mask], y_pred[low_mask].flatten()]).astype(int))                      
+            else:
+                target_labels = np.unique(np.concatenate([y_val[low_mask], y_pred[low_mask]]))               
+            f.write(classification_report(y_val[low_mask], y_pred[low_mask], target_names=np.asarray(types)[target_labels], zero_division=0))
+            mcc = matthews_corrcoef(y_val[low_mask], y_pred[low_mask])
+            f.write(row_fmt_mcc.format("mcc", "", "", mcc, "", width=width, digits=digits)) 
 
 
     performance_df = pd.DataFrame({'accuracy': accuracies, 'recall': recalls, 'precision': precisions, 'roc_auc': roc_aucs, 'mcc' : mccs, 'specificity': specificitys})
@@ -501,7 +554,7 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
 
     # add performance on test set with Dataset 'Test'
     model = get_model(model_name, settings)
-    model.fit(X, y)
+    model.fit(X.values, y)
     if model_name == 'AttentionDeepSets':
         model.save(os.path.join(store_dir, "model.pkl"))
 
@@ -514,16 +567,17 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
     else:
         conf_matrix = confusion_matrix(y_test, y_pred)
         num_classes = conf_matrix.shape[0]
-        specificitys = []
+        ss = []
         for i in range(num_classes):
             TP = conf_matrix[i, i]
             FN = np.sum(conf_matrix[i, :]) - TP
             FP = np.sum(conf_matrix[:, i]) - TP
             TN = np.sum(conf_matrix) - TP - FN - FP
             s = TN / (TN+FP)
+            ss.append(s)
             
         support = np.sum(conf_matrix, axis=1)
-        s = np.average(specificitys, weights=support)
+        s = np.average(ss, weights=support)
 
 
     performance_df_test["specificity"] = s
@@ -574,7 +628,7 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
     
     try:
         if model_name in ["Logistic Regression" or "SVM"]:
-            coefficients = model.coef_[0]
+            coefficients = np.mean(model.coef_, axis=0)
             feature_importance = coefficients
         else:
             feature_importance = model.feature_importances_
@@ -610,14 +664,15 @@ def infer(model_name, model_path, settings, selected_features, class_files, test
 def sample_setting(model_name):
     general_distributions = dict(
                         n_splits= [3],
-                        n_clones=[1000, 5000],
+                        n_clones=[1,2,3,4,5,10,20,50,100],
                         genefamily = [False],
                         standardize = [True, False], #[False, True],
                         ordinal_encoding = [False], #[False, True],
                         onehot_encoding = [True], #[False, True],
                         add_clonality = [True], #[True, False],
-                        add_shannon = [False], #[True, False],
+                        add_shannon = [True], #[True, False],
                         add_richness = [True], #[True, False],
+                        sampler = ['random_over']
                         )
     
     tree_distributions = dict(
@@ -792,7 +847,7 @@ def baseline(class_files, types, store_path = None):
 
     X, y, clone_fractions = create_features(class_files, feature_names, object_types, n_entries=1, ordinal_encoding=True)
     
-    sss = StratifiedShuffleSplit(n_splits=1, test_size=0.1, random_state=0)
+    sss = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
     train_index, test_index =  sss.split(X, y).__next__()
     
     y_baseline = np.array([1 if cf >= 0.2 else 0 for cf in clone_fractions])
@@ -844,9 +899,9 @@ def baseline(class_files, types, store_path = None):
 
 if __name__ == '__main__':
     path_dir = "immusign/data/"
-    store_path = "immusign/final_evaluation/deepset/nlphl_dlbcl_hd/"
-    comparisons = [['nlphl'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd']]#[['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['unspecified'], ['nlphl'], ['thrlbcl'], ['lymphadenitis']]
-    comparison_labels = ['nlphl', 'dlbcl', 'hd']#['cll', 'dlbcl', 'hd', 'unspecified','nlphl',  'thrlbcl', 'lymphadenitis']
+    store_path = "immusign/final_evaluation/sampling/nlphl_dlbcl_hd_cll/"
+    comparisons = [['nlphl'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['cll']]#[['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['unspecified'], ['nlphl'], ['thrlbcl'], ['lymphadenitis']]
+    comparison_labels = ['nlphl', 'dlbcl', 'hd', 'cll']#['cll', 'dlbcl', 'hd', 'unspecified','nlphl',  'thrlbcl', 'lymphadenitis']
 
     #'unspecified', 'dlbcl', 'nlphl', 'abc_dlbcl', 'thrlbcl', 'lymphadenitis', hd
     
@@ -880,10 +935,11 @@ if __name__ == '__main__':
                 already_trained_feature_combinations.append(selected_features_i)
     
 
-    #hyperopt_classical(36, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
-    hyperopt_classical(1, "AttentionDeepSets", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    #hyperopt_classical(128, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+   #hyperopt_classical(72, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    hyperopt_classical(137, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
 
-    score_to_choose_best = "mcc"
+    score_to_choose_best = "weighted avg"
     best_score_test = -np.inf
     best_score_valid = -np.inf
     best_model_test = ""
