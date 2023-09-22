@@ -45,8 +45,7 @@ contaminated_hds = ['105-D28-Ig-gDNA-PB-Nuray-A250_S180.clones.txt',
  'ChristophS-hs-IGH-HD078-31-01-2017-gDNA_S126.clones.txt',
  'HD-078-IGH-Dona_S52.clones.txt',
  'HD-Mix2-250ng-10hoch6-FR1-Ig-Anna-m-binder-A250_S95.clones.txt',
- 'HD-Mix2-250ng-200000-FR1-Ig-Anna-m-binder-A250_S97.clones.txt',
- 'Christoph-hs-IGH-HD141-gDNA_S119.clones.txt']
+ 'HD-Mix2-250ng-200000-FR1-Ig-Anna-m-binder-A250_S97.clones.txt']
 
 def normalize_values(array_to_norm):
     stds = np.std(array_to_norm)
@@ -124,12 +123,12 @@ def get_clonset_info(rep, method, quant="cloneFraction"):
         info = sum(rep["cloneCount"])
     elif method == "aminoacid_clones":
         info = n_aa_clones
+
+    elif method == "hypermutation":
+        hyper = rep[rep.vBestIdentityPercent < 0.98]
+        info = np.sum(hyper.cloneFraction)
     
     return info
-
-def calculate_hypermutation(rep, threshold = 0.98):
-    hyper_mutation = np.sum(rep.vBestIdentityPercent < threshold)/len(rep)
-    return hyper_mutation
 
 def read_clones_txt(files, clones_txt_dict=None, normalize_read_count = None):
     """
@@ -152,10 +151,11 @@ def read_clones_txt(files, clones_txt_dict=None, normalize_read_count = None):
         df_file["clones.txt.name"] = os.path.basename(file)
 
         if normalize_read_count == None:
-            df_file["cloneFraction"] = df_file["cloneFraction"].apply(lambda x: float(x.replace(",",".").replace("+","-")) if isinstance(x, str) else float(x)) 
+            #df_file["cloneFraction"] = df_file["cloneFraction"].apply(lambda x: float(x.replace(",",".").replace("+","-")) if isinstance(x, str) else float(x)) 
+            df_file["cloneFraction"] = df_file["cloneFraction"].apply(lambda x:float(x))
         else:
-            norm_facktor = sum(df_file["cloneCount"])/normalize_read_count
-            df_file["cloneCount"] = df_file["cloneCount"]/norm_facktor
+            norm_factor = sum(df_file["cloneCount"])/normalize_read_count
+            df_file["cloneCount"] = df_file["cloneCount"]/norm_factor
             df_file = df_file[~(df_file["cloneCount"]<2)]
             df_file["cloneFraction"] = (df_file["cloneCount"]/sum(df_file["cloneCount"]))
             df_file["cloneCount"] = df_file["cloneCount"].apply(np.ceil)
@@ -176,6 +176,7 @@ def read_clones_txt(files, clones_txt_dict=None, normalize_read_count = None):
         
         df_file["low_reads"] = df_file["total_reads"] < 30000
         df_file["hypermutated"] = df_file["vBestIdentityPercent"] < 0.98
+        df_file["hypermutatedFraction"] = get_clonset_info(df_file, "hypermutation")
 
         df_raw.append(df_file)
     df_raw = pd.concat(df_raw)
