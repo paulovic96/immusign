@@ -150,7 +150,7 @@ def read_feature(files, features , n_entries, flatten=True, return_filenames=Fal
         else:
             added_hypermutatedFraction = False
         
-        if "is_hypermutated" in selected_features:
+        if "is_hypermutated" in read_features:
             df["is_hypermutated"] = df["vBestIdentityPercent"] < 0.98
     
         df = df.iloc[:n_entries] 
@@ -688,7 +688,7 @@ def sample_setting(model_name):
                         add_clonality = [True], #[True, False],
                         add_shannon = [True], #[True, False],
                         add_richness = [True], #[True, False],
-                        add_hypermutation = [True],
+                        add_hypermutation = [False],
                         sampler = ['random_over']
                         )
     
@@ -918,7 +918,7 @@ def baseline(class_files, types, store_path = None):
 
 if __name__ == '__main__':
     path_dir = "immusign/data/"
-    store_path = "immusign/hypermutation/nlphl_dlbcl_hd_cll/"
+    store_path = "immusign/hypermutation_perVGene/nlphl_dlbcl_hd_cll/"
     comparisons = [['nlphl'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['cll']]#[['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['unspecified'], ['nlphl'], ['thrlbcl'], ['lymphadenitis']]
     comparison_labels = ['nlphl', 'dlbcl', 'hd', 'cll']#['cll', 'dlbcl', 'hd', 'unspecified','nlphl',  'thrlbcl', 'lymphadenitis']
 
@@ -955,10 +955,10 @@ if __name__ == '__main__':
     
 
     #hyperopt_classical(128, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
-    #hyperopt_classical(72, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
-    hyperopt_classical(33, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    hyperopt_classical(72, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    hyperopt_classical(144, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
 
-    store_path = "immusign/hypermutation/nlphl_dlbcl_hd/"
+    store_path = "immusign/hypermutation_perVGene/nlphl_dlbcl_hd/"
     comparisons = [['nlphl'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd']]#[['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['unspecified'], ['nlphl'], ['thrlbcl'], ['lymphadenitis']]
     comparison_labels = ['nlphl', 'dlbcl', 'hd']#['cll', 'dlbcl', 'hd', 'unspecified','nlphl',  'thrlbcl', 'lymphadenitis']
 
@@ -968,12 +968,12 @@ if __name__ == '__main__':
     print(number_of_repertoires)
 
     df_baseline, train_index, test_index = baseline(class_files, comparison_labels, store_path=store_path)
-    selected_features = ['cloneFraction', 'lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)]
+    selected_features = ['cloneFraction', 'lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene', 'is_hypermutated'] + ['KF%i' %i for i in range(1, 11)]
     #selected_features = ['lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)]
     hyperopt_classical(72, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
     hyperopt_classical(144, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
 
-    store_path = "immusign/hypermutation/cll_dlbcl_hd/"
+    store_path = "immusign/hypermutation_perVGene/cll_dlbcl_hd/"
     comparisons = [['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd']]#[['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['unspecified'], ['nlphl'], ['thrlbcl'], ['lymphadenitis']]
     comparison_labels = ['cll', 'dlbcl', 'hd']#['cll', 'dlbcl', 'hd', 'unspecified','nlphl',  'thrlbcl', 'lymphadenitis']
 
@@ -983,10 +983,10 @@ if __name__ == '__main__':
     print(number_of_repertoires)
 
     df_baseline, train_index, test_index = baseline(class_files, comparison_labels, store_path=store_path)
-    selected_features = ['cloneFraction', 'lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)]
+    selected_features = ['cloneFraction', 'lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene', 'is_hypermutated'] + ['KF%i' %i for i in range(1, 11)]
     #selected_features = ['lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)]
-    #hyperopt_classical(72, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
-    hyperopt_classical(137, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    hyperopt_classical(72, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    hyperopt_classical(144, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
 
 
     score_to_choose_best = "f1"
