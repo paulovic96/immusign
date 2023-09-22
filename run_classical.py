@@ -149,6 +149,9 @@ def read_feature(files, features , n_entries, flatten=True, return_filenames=Fal
             read_features.remove("hypermutatedFraction")
         else:
             added_hypermutatedFraction = False
+        
+        if "is_hypermutated" in selected_features:
+            df["is_hypermutated"] = df["vBestIdentityPercent"] < 0.98
     
         df = df.iloc[:n_entries] 
         d = df[read_features].values
@@ -228,6 +231,7 @@ def create_features(class_files, feature_names, object_types, n_entries=5, oneho
                 column_names.append(feature + "_%i" %i)
                 column_to_features[feature + "_%i" %i] = feature
                 column_to_type[feature + "_%i" %i] = object_types[feature_names.index(feature)]
+    
     if "clonality" in feature_names:
         column_names.append("clonality")
         column_to_features["clonality"] = "clonality"
@@ -345,6 +349,8 @@ def read_features_deep(class_files, selected_features, scale=False, max_clones =
                 df["richness"] = get_clonset_info(df, "aminoacid_clones")
             if "hypermutatedFraction" in selected_features:
                 df["hypermutatedFraction"] = get_clonset_info(df, "hypermutation")
+            if "is_hypermutated" in selected_features:
+                df["is_hypermutated"] = df["vBestIdentityPercent"] < 0.98
     
             # encode v,d,j genes to indices
             df["bestVGene"] = df["bestVGene"].apply(lambda x: gene2index[str(x)] if str(x) in gene2index else -1)
@@ -391,8 +397,8 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
     with open(os.path.join(store_dir, "settings.json"), 'w') as outfile:
         json.dump(settings, outfile, indent=2)
 
-    feature_names = ['cloneFraction', 'lengthOfCDR3', 'clonality', 'shannon', 'richness', 'hypermutatedFraction']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)] 
-    object_types = ['float64', 'int64', 'float64', 'float64', 'float64', 'float64']  +  ['object', 'object', 'object']+['float64' for i in range(10)] 
+    feature_names = ['cloneFraction', 'lengthOfCDR3', 'clonality', 'shannon', 'richness', 'hypermutatedFraction']  + ['bestVGene', 'bestDGene', 'bestJGene', "is_hypermutated"] + ['KF%i' %i for i in range(1, 11)] 
+    object_types = ['float64', 'int64', 'float64', 'float64', 'float64', 'float64']  +  ['object', 'object', 'object', 'object']+['float64' for i in range(10)] 
 
     # create dict from feature name to object type
     feature_dict = {}
@@ -922,7 +928,7 @@ if __name__ == '__main__':
     print(number_of_repertoires)
 
     df_baseline, train_index, test_index = baseline(class_files, comparison_labels, store_path=store_path)
-    selected_features = ['cloneFraction', 'lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)]
+    selected_features = ['cloneFraction', 'lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene', 'is_hypermutated'] + ['KF%i' %i for i in range(1, 11)]
     #selected_features = ['lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)]
     
     models_to_train = []
