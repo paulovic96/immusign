@@ -25,18 +25,7 @@ warnings.filterwarnings("ignore")
 np.random.seed(42)
 random.seed(42)
 
-
-contaminated_hds = ['105-D28-Ig-gDNA-PB-Nuray-A250_S180.clones.txt',
- '108-D0-Ig-gDNA-PB-Nuray-A250_S185.clones.txt',
- '109-D0-Ig-gDNA-PB-Nuray-A250_S187.clones.txt',
- 'Barbara-hs-IGH-Zeller-1-HD-PB-gDNA_S140.clones.txt',
- 'Barbara-hs-IGH-Zeller-110-HD-PB-gDNA_S148.clones.txt',
- 'Christoph-hs-IGH-HD078-PB-gDNA-HLA-DRB1-AIH2-liver-gDNA_S255.clones.txt',
- 'ChristophS-hs-IGH-HD078-31-01-2017-gDNA_S126.clones.txt',
- 'HD-078-IGH-Dona_S52.clones.txt',
- 'HD-Mix2-250ng-10hoch6-FR1-Ig-Anna-m-binder-A250_S95.clones.txt',
- 'HD-Mix2-250ng-200000-FR1-Ig-Anna-m-binder-A250_S97.clones.txt',
- 'Christoph-hs-IGH-HD141-gDNA_S119.clones.txt']
+from utils import contaminated_hds
 
 def create_vdj_index(class_files, family = False):
     
@@ -154,6 +143,12 @@ def read_feature(files, features , n_entries, flatten=True, return_filenames=Fal
             read_features.remove("richness")
         else:
             added_richness = False
+        if "hypermutatedFraction" in read_features:
+            hypermutatedFraction = get_clonset_info(df, "hypermutation")
+            added_hypermutatedFraction = True
+            read_features.remove("hypermutatedFraction")
+        else:
+            added_hypermutatedFraction = False
     
         df = df.iloc[:n_entries] 
         d = df[read_features].values
@@ -175,6 +170,9 @@ def read_feature(files, features , n_entries, flatten=True, return_filenames=Fal
                 if added_richness:
                     d = np.append(d, richness)
                     read_features += ["richness"]  
+                if added_hypermutatedFraction:
+                    d = np.append(d, hypermutatedFraction)
+                    read_features += ["hypermutatedFraction"]  
                 data.append(d)
             except NameError as e:
                 data.append(d.flatten())
@@ -189,6 +187,9 @@ def read_feature(files, features , n_entries, flatten=True, return_filenames=Fal
                 if added_richness:
                     d = np.column_stack((d, np.repeat(richness)))
                     read_features += ["richness"]
+                if added_hypermutatedFraction:
+                    d = np.column_stack((d, np.repeat(hypermutatedFraction)))
+                    read_features += ["hypermutatedFraction"]
                 data.append(d)
                 
             except NameError: 
@@ -221,7 +222,7 @@ def create_features(class_files, feature_names, object_types, n_entries=5, oneho
     column_to_type = {}
     for i in range(n_entries):
         for feature in feature_names:
-            if feature == "clonality" or feature == "shannon" or feature == "richness":
+            if feature == "clonality" or feature == "shannon" or feature == "richness" or feature == "hypermutatedFraction":
                 continue
             else:
                 column_names.append(feature + "_%i" %i)
@@ -239,6 +240,10 @@ def create_features(class_files, feature_names, object_types, n_entries=5, oneho
         column_names.append("richness")
         column_to_features["richness"] = "richness"
         column_to_type["richness"] = object_types[feature_names.index("richness")]
+    if "hypermutatedFraction" in feature_names:
+        column_names.append("hypermutatedFraction")
+        column_to_features["hypermutatedFraction"] = "hypermutatedFraction"
+        column_to_type["hypermutatedFraction"] = object_types[feature_names.index("hypermutatedFraction")]
 
     X = []
     clone_fractions = []
@@ -338,6 +343,8 @@ def read_features_deep(class_files, selected_features, scale=False, max_clones =
                 df["shannon"] = get_clonset_info(df, "shannon")
             if "richness" in selected_features:
                 df["richness"] = get_clonset_info(df, "aminoacid_clones")
+            if "hypermutatedFraction" in selected_features:
+                df["hypermutatedFraction"] = get_clonset_info(df, "hypermutation")
     
             # encode v,d,j genes to indices
             df["bestVGene"] = df["bestVGene"].apply(lambda x: gene2index[str(x)] if str(x) in gene2index else -1)
@@ -384,8 +391,8 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
     with open(os.path.join(store_dir, "settings.json"), 'w') as outfile:
         json.dump(settings, outfile, indent=2)
 
-    feature_names = ['cloneFraction', 'lengthOfCDR3', 'clonality', 'shannon', 'richness']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)] 
-    object_types = ['float64', 'int64', 'float64', 'float64', 'float64']  +  ['object', 'object', 'object']+['float64' for i in range(10)] 
+    feature_names = ['cloneFraction', 'lengthOfCDR3', 'clonality', 'shannon', 'richness', 'hypermutatedFraction']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)] 
+    object_types = ['float64', 'int64', 'float64', 'float64', 'float64', 'float64']  +  ['object', 'object', 'object']+['float64' for i in range(10)] 
 
     # create dict from feature name to object type
     feature_dict = {}
@@ -554,6 +561,9 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
 
     # add performance on test set with Dataset 'Test'
     model = get_model(model_name, settings)
+    if sampler is not None:
+            X, y = sampler.fit_resample(X, y)
+    
     model.fit(X.values, y)
     if model_name == 'AttentionDeepSets':
         model.save(os.path.join(store_dir, "model.pkl"))
@@ -672,6 +682,7 @@ def sample_setting(model_name):
                         add_clonality = [True], #[True, False],
                         add_shannon = [True], #[True, False],
                         add_richness = [True], #[True, False],
+                        add_hypermutation = [True],
                         sampler = ['random_over']
                         )
     
@@ -689,7 +700,7 @@ def sample_setting(model_name):
     )
 
     svm_distributions = dict(
-                        max_iter = [5000],
+                        max_iter = [100000],
                         kernel = ['rbf'],
                         C = [0.001, 0.01, 0.1, 1, 10, 100],
     )
@@ -797,6 +808,8 @@ def hyperopt_classical(iterations, model_name, selected_features, class_files, t
             temp_selected_features += ["shannon"]
         if tmp_setting["add_richness"]:
             temp_selected_features += ["richness"]
+        if tmp_setting["add_hypermutation"]:
+            temp_selected_features += ["hypermutatedFraction"]
 
         main(model_name, tmp_setting, temp_selected_features, class_files, train_index, test_index, types, store_path)
         already_trained_settings.append(tmp_setting)
@@ -899,7 +912,7 @@ def baseline(class_files, types, store_path = None):
 
 if __name__ == '__main__':
     path_dir = "immusign/data/"
-    store_path = "immusign/final_evaluation/sampling/nlphl_dlbcl_hd_cll/"
+    store_path = "immusign/hypermutation/nlphl_dlbcl_hd_cll/"
     comparisons = [['nlphl'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['cll']]#[['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['unspecified'], ['nlphl'], ['thrlbcl'], ['lymphadenitis']]
     comparison_labels = ['nlphl', 'dlbcl', 'hd', 'cll']#['cll', 'dlbcl', 'hd', 'unspecified','nlphl',  'thrlbcl', 'lymphadenitis']
 
@@ -936,10 +949,41 @@ if __name__ == '__main__':
     
 
     #hyperopt_classical(128, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
-   #hyperopt_classical(72, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    #hyperopt_classical(72, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    hyperopt_classical(33, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+
+    store_path = "immusign/hypermutation/nlphl_dlbcl_hd/"
+    comparisons = [['nlphl'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd']]#[['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['unspecified'], ['nlphl'], ['thrlbcl'], ['lymphadenitis']]
+    comparison_labels = ['nlphl', 'dlbcl', 'hd']#['cll', 'dlbcl', 'hd', 'unspecified','nlphl',  'thrlbcl', 'lymphadenitis']
+
+    #'unspecified', 'dlbcl', 'nlphl', 'abc_dlbcl', 'thrlbcl', 'lymphadenitis', hd
+    
+    class_files, number_of_repertoires = load_metadata(comparisons, "IGH", path_dir)
+    print(number_of_repertoires)
+
+    df_baseline, train_index, test_index = baseline(class_files, comparison_labels, store_path=store_path)
+    selected_features = ['cloneFraction', 'lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)]
+    #selected_features = ['lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)]
+    hyperopt_classical(72, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    hyperopt_classical(144, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+
+    store_path = "immusign/hypermutation/cll_dlbcl_hd/"
+    comparisons = [['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd']]#[['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['unspecified'], ['nlphl'], ['thrlbcl'], ['lymphadenitis']]
+    comparison_labels = ['cll', 'dlbcl', 'hd']#['cll', 'dlbcl', 'hd', 'unspecified','nlphl',  'thrlbcl', 'lymphadenitis']
+
+    #'unspecified', 'dlbcl', 'nlphl', 'abc_dlbcl', 'thrlbcl', 'lymphadenitis', hd
+    
+    class_files, number_of_repertoires = load_metadata(comparisons, "IGH", path_dir)
+    print(number_of_repertoires)
+
+    df_baseline, train_index, test_index = baseline(class_files, comparison_labels, store_path=store_path)
+    selected_features = ['cloneFraction', 'lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)]
+    #selected_features = ['lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)]
+    #hyperopt_classical(72, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
     hyperopt_classical(137, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
 
-    score_to_choose_best = "weighted avg"
+
+    score_to_choose_best = "f1"
     best_score_test = -np.inf
     best_score_valid = -np.inf
     best_model_test = ""
@@ -954,8 +998,16 @@ if __name__ == '__main__':
                         baseline_results = pd.read_csv(file)
                     else:
                         model_results = pd.read_csv(file)
-                        score_test = model_results[model_results["Dataset"] == "Test"][score_to_choose_best].iloc[0]
-                        score_valid = np.mean(model_results[model_results["Dataset"] == "Validation"][score_to_choose_best])
+                        if score_to_choose_best == "f1":
+                            prec_test = model_results[model_results["Dataset"] == "Test"]["precision"].iloc[0]
+                            rec_test = model_results[model_results["Dataset"] == "Test"]["recall"].iloc[0]
+                            score_test = 2 * prec_test * rec_test / (prec_test + rec_test)
+                            prec_valid = model_results[model_results["Dataset"] == "Validation"]["precision"]
+                            rec_valid = model_results[model_results["Dataset"] == "Validation"]["recall"]
+                            score_valid = np.mean(2 * prec_valid * rec_valid / (prec_valid + rec_valid))
+                        else:
+                            score_test = model_results[model_results["Dataset"] == "Test"][score_to_choose_best].iloc[0]
+                            score_valid = np.mean(model_results[model_results["Dataset"] == "Validation"][score_to_choose_best])
                         if score_test > best_score_test:
                             best_score_test = score_test
                             best_model_test = os.path.join(os.path.basename(os.path.dirname(path)), os.path.basename(path)) 
