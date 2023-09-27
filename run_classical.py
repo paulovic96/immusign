@@ -688,7 +688,7 @@ def sample_setting(model_name):
                         add_clonality = [True], #[True, False],
                         add_shannon = [True], #[True, False],
                         add_richness = [True], #[True, False],
-                        add_hypermutation = [False],
+                        add_hypermutation = [True],
                         sampler = ['random_over']
                         )
     
@@ -802,9 +802,9 @@ def hyperopt_classical(iterations, model_name, selected_features, class_files, t
                 tmp_setting, max_possible_combinations = sample_setting(model_name)
                 if tmp_setting not in already_trained_settings:
                     break    
-                #if len(already_trained_settings) >= max_possible_combinations:
-                #    print("Exhausted parameter search...")
-                #    return
+                if len(already_trained_settings) >= max_possible_combinations:
+                    print("Exhausted parameter search...")
+                    return
         
         
         temp_selected_features = selected_features.copy()
@@ -918,18 +918,16 @@ def baseline(class_files, types, store_path = None):
 
 if __name__ == '__main__':
     path_dir = "immusign/data/"
-    store_path = "immusign/hypermutation_perVGene/nlphl_dlbcl_hd_cll/"
+    store_path = "immusign/hypermutation/nlphl_dlbcl_hd_cll/"
     comparisons = [['nlphl'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['cll']]#[['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['unspecified'], ['nlphl'], ['thrlbcl'], ['lymphadenitis']]
     comparison_labels = ['nlphl', 'dlbcl', 'hd', 'cll']#['cll', 'dlbcl', 'hd', 'unspecified','nlphl',  'thrlbcl', 'lymphadenitis']
 
-    #'unspecified', 'dlbcl', 'nlphl', 'abc_dlbcl', 'thrlbcl', 'lymphadenitis', hd
     
     class_files, number_of_repertoires = load_metadata(comparisons, "IGH", path_dir)
     print(number_of_repertoires)
 
     df_baseline, train_index, test_index = baseline(class_files, comparison_labels, store_path=store_path)
-    selected_features = ['cloneFraction', 'lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene', 'is_hypermutated'] + ['KF%i' %i for i in range(1, 11)]
-    #selected_features = ['lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)]
+    selected_features = ['cloneFraction', 'lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)]
     
     models_to_train = []
     for model_name in models_to_train:
@@ -954,37 +952,32 @@ if __name__ == '__main__':
                 already_trained_feature_combinations.append(selected_features_i)
     
 
-    #hyperopt_classical(128, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
     hyperopt_classical(72, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
     hyperopt_classical(144, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
 
-    store_path = "immusign/hypermutation_perVGene/nlphl_dlbcl_hd/"
+    store_path = "immusign/hypermutation/nlphl_dlbcl_hd/"
     comparisons = [['nlphl'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd']]#[['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['unspecified'], ['nlphl'], ['thrlbcl'], ['lymphadenitis']]
     comparison_labels = ['nlphl', 'dlbcl', 'hd']#['cll', 'dlbcl', 'hd', 'unspecified','nlphl',  'thrlbcl', 'lymphadenitis']
-
-    #'unspecified', 'dlbcl', 'nlphl', 'abc_dlbcl', 'thrlbcl', 'lymphadenitis', hd
     
     class_files, number_of_repertoires = load_metadata(comparisons, "IGH", path_dir)
     print(number_of_repertoires)
 
     df_baseline, train_index, test_index = baseline(class_files, comparison_labels, store_path=store_path)
-    selected_features = ['cloneFraction', 'lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene', 'is_hypermutated'] + ['KF%i' %i for i in range(1, 11)]
-    #selected_features = ['lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)]
+    selected_features = ['cloneFraction', 'lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)]
+    
     hyperopt_classical(72, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
     hyperopt_classical(144, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
 
-    store_path = "immusign/hypermutation_perVGene/cll_dlbcl_hd/"
+    store_path = "immusign/hypermutation/cll_dlbcl_hd/"
     comparisons = [['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd']]#[['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['unspecified'], ['nlphl'], ['thrlbcl'], ['lymphadenitis']]
     comparison_labels = ['cll', 'dlbcl', 'hd']#['cll', 'dlbcl', 'hd', 'unspecified','nlphl',  'thrlbcl', 'lymphadenitis']
-
-    #'unspecified', 'dlbcl', 'nlphl', 'abc_dlbcl', 'thrlbcl', 'lymphadenitis', hd
-    
+ 
     class_files, number_of_repertoires = load_metadata(comparisons, "IGH", path_dir)
     print(number_of_repertoires)
 
     df_baseline, train_index, test_index = baseline(class_files, comparison_labels, store_path=store_path)
-    selected_features = ['cloneFraction', 'lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene', 'is_hypermutated'] + ['KF%i' %i for i in range(1, 11)]
-    #selected_features = ['lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)]
+    selected_features = ['cloneFraction', 'lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)]
+    
     hyperopt_classical(72, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
     hyperopt_classical(144, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
 
