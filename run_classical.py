@@ -3,7 +3,6 @@ import os
 from sklearn.metrics import accuracy_score, recall_score, precision_score, roc_auc_score, matthews_corrcoef, classification_report
 from sklearn.model_selection import StratifiedShuffleSplit, StratifiedKFold
 from sklearn.metrics import accuracy_score
-import matplotlib.pyplot as plt
 import random, time, string
 import pandas as pd
 from sklearn.preprocessing import OrdinalEncoder, OneHotEncoder
@@ -20,12 +19,11 @@ import lightgbm
 import warnings
 from utils import get_clonset_info
 from networks import DeepSetClassifier
+from utils import contaminated_hds
 from sklearn.metrics import confusion_matrix
 warnings.filterwarnings("ignore")
 np.random.seed(42)
 random.seed(42)
-
-from utils import contaminated_hds
 
 def create_vdj_index(class_files, family = False):
     
@@ -36,7 +34,7 @@ def create_vdj_index(class_files, family = False):
     for i, type in enumerate(class_files.keys()):
         for j, file in enumerate(class_files[type]):
         
-            df = pd.read_csv("immusign/data/clones_mit_kidera/%s" % file, sep="\t")
+            df = pd.read_csv("data/clones_mit_kidera/%s" % file, sep="\t")
                 
             bestvgene.extend(df["bestVGene"].unique())
             bestdgene.extend(df["bestDGene"].unique())
@@ -96,10 +94,10 @@ def create_vdj_index(class_files, family = False):
                 gene2index[gene] = list(uniqejgenefamilies).index(str(bestjgene_short[i]))
     # save to json file
     if family:
-        with open("immusign/data/gene2index_family.json", "w") as outfile:
+        with open("data/gene2index_family.json", "w") as outfile:
             json.dump(gene2index, outfile)
     else:
-        with open("immusign/data/gene2index.json", "w") as outfile:
+        with open("data/gene2index.json", "w") as outfile:
             json.dump(gene2index, outfile)
     print(gene2index)
 
@@ -120,7 +118,7 @@ def read_feature(files, features , n_entries, flatten=True, return_filenames=Fal
 
     read_features = features.copy()
     for i, file in enumerate(files):
-        df = pd.read_csv("immusign/data/clones_mit_kidera/%s" %file, sep="\t")
+        df = pd.read_csv(file, sep="\t")
         df = df[df['cloneFraction'].apply(lambda x: isinstance(x, (int, float)))] 
         if (df.shape[0] == 0):
             continue
@@ -284,7 +282,7 @@ def create_features(class_files, feature_names, object_types, n_entries=5, oneho
         categorical_cols = X.columns[X.dtypes == 'category']
         if genefamily:
              # read gene2index mapping
-            with open("immusign/data/gene2index.json", "r") as infile:
+            with open("data/gene2index.json", "r") as infile:
                 gene2index = json.load(infile)
                 for c in categorical_cols:
                      X[c] = X[c].apply(lambda x: gene2index[str(x)] if str(x) in gene2index else -1)
@@ -317,10 +315,10 @@ def read_features_deep(class_files, selected_features, scale=False, max_clones =
 
     # read gene2index mapping
     if genefamily:
-        with open("immusign/data/gene2index_family.json", "r") as infile:
+        with open("data/gene2index_family.json", "r") as infile:
             gene2index = json.load(infile)
     else:
-        with open("immusign/data/gene2index.json", "r") as infile:
+        with open("data/gene2index.json", "r") as infile:
             gene2index = json.load(infile)
 
     X = []
@@ -334,7 +332,7 @@ def read_features_deep(class_files, selected_features, scale=False, max_clones =
     for i, type in enumerate(class_files.keys()):
         for j, file in enumerate(class_files[type]):
             print("File %s" % file)
-            df = pd.read_csv("immusign/data/clones_mit_kidera/%s" % file, sep="\t")
+            df = pd.read_csv(file, sep="\t")
             df = df[df['cloneFraction'].apply(lambda x: isinstance(x, (int, float)))]
 
             if (df.shape[0] == 0):
@@ -382,13 +380,33 @@ def read_features_deep(class_files, selected_features, scale=False, max_clones =
         return X, y, clone_fractions, filenames
     return X, y, clone_fractions
 
+def get_model(model_name, settings):
+        if model_name == 'Random Forest':
+            model = RandomForestClassifier(n_estimators=settings["n_estimators"], max_depth = settings["max_depth"], random_state=42)
+        elif model_name == 'XGBoost':
+            model = xgb.XGBClassifier(n_estimators=settings["n_estimators"], max_depth = settings["max_depth"], random_state=42)
+        elif model_name == 'LightGBM':
+            model = lightgbm.LGBMClassifier(n_estimators=settings["n_estimators"], max_depth = settings["max_depth"], random_state=42, bagging_fraction=1.0, boost_from_average=False, verbose=-1)
+        elif model_name == "CatBoost":
+            model = CatBoostClassifier(n_estimators=settings["n_estimators"], max_depth = settings["max_depth"], random_state=42, verbose=False)
+        elif model_name == "TabPFN":
+            raise NotImplementedError
+        elif model_name == "Logistic Regression":
+            model = LogisticRegression(max_iter=settings["max_iter"], penalty=settings['regularization'], C=settings['C'], solver=settings['solver'], l1_ratio=settings["l1_ratio"], n_jobs=8)
+        elif model_name == "SVM":
+            model = SVC(max_iter=settings["max_iter"], kernel = settings["kernel"], C=settings["C"])
+        elif model_name == 'AttentionDeepSets':
+            model = DeepSetClassifier(params=settings)
+        else:
+            raise NotImplementedError
+        return model
 
 
 def main(model_name,settings, selected_features, class_files, train_index, test_index, types, store_path=None):
 
     print("Start %s training..." %model_name)
     if store_path == None:
-        store_dir  = os.path.join("immusign/outputs_%s" % model_name.replace(" ", ""), _run_name("classification") )
+        store_dir  = os.path.join("outputs_%s" % model_name.replace(" ", ""), _run_name("classification") )
     else:
         store_dir = os.path.join(store_path, "outputs_%s" % model_name.replace(" ", ""), _run_name("classification") )
 
@@ -438,27 +456,6 @@ def main(model_name,settings, selected_features, class_files, train_index, test_
     roc_aucs = []
     mccs = []
     masked_dlbcl_accuracies = []
-    
-    def get_model(model_name, settings):
-        if model_name == 'Random Forest':
-            model = RandomForestClassifier(n_estimators=settings["n_estimators"], max_depth = settings["max_depth"], random_state=42)
-        elif model_name == 'XGBoost':
-            model = xgb.XGBClassifier(n_estimators=settings["n_estimators"], max_depth = settings["max_depth"], random_state=42)
-        elif model_name == 'LightGBM':
-            model = lightgbm.LGBMClassifier(n_estimators=settings["n_estimators"], max_depth = settings["max_depth"], random_state=42, bagging_fraction=1.0, boost_from_average=False, verbose=-1)
-        elif model_name == "CatBoost":
-            model = CatBoostClassifier(n_estimators=settings["n_estimators"], max_depth = settings["max_depth"], random_state=42, verbose=False)
-        elif model_name == "TabPFN":
-            raise NotImplementedError
-        elif model_name == "Logistic Regression":
-            model = LogisticRegression(max_iter=settings["max_iter"], penalty=settings['regularization'], C=settings['C'], solver=settings['solver'], l1_ratio=settings["l1_ratio"], n_jobs=8)
-        elif model_name == "SVM":
-            model = SVC(max_iter=settings["max_iter"], kernel = settings["kernel"], C=settings["C"])
-        elif model_name == 'AttentionDeepSets':
-            model = DeepSetClassifier(params=settings)
-        else:
-            raise NotImplementedError
-        return model
     
     sampling_strategies = {
     'None': None,
@@ -671,7 +668,8 @@ def infer(model_name, model_path, settings, selected_features, class_files, test
     X_test = X[test_index]
     y_test = y[test_index]
     clone_fractions_test = clone_fractions[test_index]
-      
+
+    model = get_model(model_name, settings)  
     model.load(os.path.join(model_path, "model.pkl"))
 
     return X, y, X_test, y_test, model
@@ -820,7 +818,7 @@ def hyperopt_classical(iterations, model_name, selected_features, class_files, t
         main(model_name, tmp_setting, temp_selected_features, class_files, train_index, test_index, types, store_path)
         already_trained_settings.append(tmp_setting)
 
-def load_metadata(types, target_locus, path_dir):
+def load_metadata(types, target_locus, path_dir, clones_dir):
     df_meta = pd.read_csv(os.path.join(path_dir, "lymphoma-reps-file-infos.csv"))
     class_files = {}
     n_classes = len(types)
@@ -836,7 +834,8 @@ def load_metadata(types, target_locus, path_dir):
                 df_file = df_meta[(df_meta["lymphoma_specification"] == type) & (df_meta["pcr_target_locus"].str.contains(target_locus))]
             if type == "hd":
                 df_file = df_file[~df_file["clones.txt.name"].isin(contaminated_hds)]
-            files[type] = df_file["clones.txt.name"].values
+            
+            files[type] = df_file["clones.txt.name"].apply(lambda file : os.path.join(clones_dir, file)).values
             class_files[i].extend(files[type])
             num_repertoires += len(files[type])
         print("Number of Class %i repertoires: %i" %(i+1, num_repertoires))
@@ -885,7 +884,7 @@ def baseline(class_files, types, store_path = None):
     df_baseline = pd.concat([df_baseline_train, df_baseline_test])
 
     if store_path == None:
-        store_dir = os.path.join("immusign/results_twoclass/outputs_Baseline")
+        store_dir = os.path.join("outputs_Baseline")
     else:
         store_dir = os.path.join(store_path, "outputs_Baseline")
     os.makedirs(store_dir, exist_ok=True)
@@ -916,50 +915,30 @@ def baseline(class_files, types, store_path = None):
     return df_baseline, train_index, test_index
 
 
+
 if __name__ == '__main__':
-    path_dir = "immusign/data/"
-    store_path = "immusign/hypermutation/nlphl_dlbcl_hd_cll/"
+    store_paths = []
+    path_dir = "data/"
+    clones_dir = "data/clones_mit_kidera"
+    store_path = "results/nlphl_dlbcl_hd_cll/"
     comparisons = [['nlphl'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['cll']]#[['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['unspecified'], ['nlphl'], ['thrlbcl'], ['lymphadenitis']]
     comparison_labels = ['nlphl', 'dlbcl', 'hd', 'cll']#['cll', 'dlbcl', 'hd', 'unspecified','nlphl',  'thrlbcl', 'lymphadenitis']
-
-    
-    class_files, number_of_repertoires = load_metadata(comparisons, "IGH", path_dir)
+ 
+    class_files, number_of_repertoires = load_metadata(comparisons, "IGH", path_dir, clones_dir)
     print(number_of_repertoires)
 
     df_baseline, train_index, test_index = baseline(class_files, comparison_labels, store_path=store_path)
     selected_features = ['cloneFraction', 'lengthOfCDR3']  + ['bestVGene', 'bestDGene', 'bestJGene'] + ['KF%i' %i for i in range(1, 11)]
     
-    models_to_train = []
-    for model_name in models_to_train:
-        already_trained_feature_combinations = []
-        model_path = os.path.join(store_path ,"outputs_%s" % model_name.replace(" ", ""))
-        for path, subdirs, files in os.walk(model_path):
-            for name in files:
-                file = os.path.join(path, name)
-                if file.endswith("selected_features.json"):
-                    with open(file) as f:
-                        settings = f.read()
-                        settings = settings.replace("\n", "").strip()
-                        settings = json.loads(settings)
-                        already_trained_feature_combinations.append(settings.copy())
-        for i in tqdm(range(500)):
-                ind = np.random.randint(0, 2, size=len(selected_features)).astype(bool)
-                selected_features_i = list(np.asarray(selected_features)[ind])
-                while selected_features_i in already_trained_feature_combinations:
-                    ind = np.random.randint(0, 2, size=len(selected_features)).astype(bool)
-                    selected_features_i = list(np.asarray(selected_features)[ind])                                 
-                hyperopt_classical(50, model_name, selected_features_i, class_files, train_index, test_index, comparison_labels, store_path=store_path)
-                already_trained_feature_combinations.append(selected_features_i)
-    
-
     hyperopt_classical(72, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
     hyperopt_classical(144, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    store_paths.append(store_path)
 
-    store_path = "immusign/hypermutation/nlphl_dlbcl_hd/"
+    store_path = "results/nlphl_dlbcl_hd/"
     comparisons = [['nlphl'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd']]#[['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['unspecified'], ['nlphl'], ['thrlbcl'], ['lymphadenitis']]
     comparison_labels = ['nlphl', 'dlbcl', 'hd']#['cll', 'dlbcl', 'hd', 'unspecified','nlphl',  'thrlbcl', 'lymphadenitis']
     
-    class_files, number_of_repertoires = load_metadata(comparisons, "IGH", path_dir)
+    class_files, number_of_repertoires = load_metadata(comparisons, "IGH", path_dir, clones_dir)
     print(number_of_repertoires)
 
     df_baseline, train_index, test_index = baseline(class_files, comparison_labels, store_path=store_path)
@@ -967,12 +946,13 @@ if __name__ == '__main__':
     
     hyperopt_classical(72, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
     hyperopt_classical(144, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
+    store_paths.append(store_path)
 
-    store_path = "immusign/hypermutation/cll_dlbcl_hd/"
+    store_path = "results/cll_dlbcl_hd/"
     comparisons = [['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd']]#[['cll'], ["dlbcl", "gcb_dlbcl", "abc_dlbcl"], ['hd'], ['unspecified'], ['nlphl'], ['thrlbcl'], ['lymphadenitis']]
     comparison_labels = ['cll', 'dlbcl', 'hd']#['cll', 'dlbcl', 'hd', 'unspecified','nlphl',  'thrlbcl', 'lymphadenitis']
  
-    class_files, number_of_repertoires = load_metadata(comparisons, "IGH", path_dir)
+    class_files, number_of_repertoires = load_metadata(comparisons, "IGH", path_dir, clones_dir)
     print(number_of_repertoires)
 
     df_baseline, train_index, test_index = baseline(class_files, comparison_labels, store_path=store_path)
@@ -980,7 +960,7 @@ if __name__ == '__main__':
     
     hyperopt_classical(72, "Random Forest", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
     hyperopt_classical(144, "Logistic Regression", selected_features, class_files, train_index, test_index, comparison_labels, store_path=store_path)
-
+    store_paths.append(store_path)
 
     score_to_choose_best = "f1"
     best_score_test = -np.inf
@@ -989,37 +969,39 @@ if __name__ == '__main__':
     best_model_valid = ""
     scores_txt_test = ""
     scores_txt_valid = ""
-    for path, subdirs, files in os.walk(store_path):
-        for name in files:
-                file = os.path.join(path, name)
-                if file.endswith("performance.csv"):
-                    if "Baseline" in file:
-                        baseline_results = pd.read_csv(file)
-                    else:
-                        model_results = pd.read_csv(file)
-                        if score_to_choose_best == "f1":
-                            prec_test = model_results[model_results["Dataset"] == "Test"]["precision"].iloc[0]
-                            rec_test = model_results[model_results["Dataset"] == "Test"]["recall"].iloc[0]
-                            score_test = 2 * prec_test * rec_test / (prec_test + rec_test)
-                            prec_valid = model_results[model_results["Dataset"] == "Validation"]["precision"]
-                            rec_valid = model_results[model_results["Dataset"] == "Validation"]["recall"]
-                            score_valid = np.mean(2 * prec_valid * rec_valid / (prec_valid + rec_valid))
+    for store_path in store_paths:
+        print("\n\n\n\n", store_path)
+        for path, subdirs, files in os.walk(store_path):
+            for name in files:
+                    file = os.path.join(path, name)
+                    if file.endswith("performance.csv"):
+                        if "Baseline" in file:
+                            baseline_results = pd.read_csv(file)
                         else:
-                            score_test = model_results[model_results["Dataset"] == "Test"][score_to_choose_best].iloc[0]
-                            score_valid = np.mean(model_results[model_results["Dataset"] == "Validation"][score_to_choose_best])
-                        if score_test > best_score_test:
-                            best_score_test = score_test
-                            best_model_test = os.path.join(os.path.basename(os.path.dirname(path)), os.path.basename(path)) 
-                            with open(os.path.join(path,"test_scores.txt")) as f:
-                                scores_txt_test = f.read()
-                        if score_valid > best_score_valid:
-                            best_score_valid = score_valid
-                            best_model_valid = os.path.join(os.path.basename(os.path.dirname(path)), os.path.basename(path)) 
-                            with open(os.path.join(path,"test_scores.txt")) as f:
-                                scores_txt_valid = f.read()
-    print("\n\n")
-    print("Best model Test: ", best_model_test)
-    print(scores_txt_test)
-    print("\n\n")
-    print("Best model Validation: ", best_model_valid)
-    print(scores_txt_valid)
+                            model_results = pd.read_csv(file)
+                            if score_to_choose_best == "f1":
+                                prec_test = model_results[model_results["Dataset"] == "Test"]["precision"].iloc[0]
+                                rec_test = model_results[model_results["Dataset"] == "Test"]["recall"].iloc[0]
+                                score_test = 2 * prec_test * rec_test / (prec_test + rec_test)
+                                prec_valid = model_results[model_results["Dataset"] == "Validation"]["precision"]
+                                rec_valid = model_results[model_results["Dataset"] == "Validation"]["recall"]
+                                score_valid = np.mean(2 * prec_valid * rec_valid / (prec_valid + rec_valid))
+                            else:
+                                score_test = model_results[model_results["Dataset"] == "Test"][score_to_choose_best].iloc[0]
+                                score_valid = np.mean(model_results[model_results["Dataset"] == "Validation"][score_to_choose_best])
+                            if score_test > best_score_test:
+                                best_score_test = score_test
+                                best_model_test = os.path.join(os.path.basename(os.path.dirname(path)), os.path.basename(path)) 
+                                with open(os.path.join(path,"test_scores.txt")) as f:
+                                    scores_txt_test = f.read()
+                            if score_valid > best_score_valid:
+                                best_score_valid = score_valid
+                                best_model_valid = os.path.join(os.path.basename(os.path.dirname(path)), os.path.basename(path)) 
+                                with open(os.path.join(path,"test_scores.txt")) as f:
+                                    scores_txt_valid = f.read()
+        print("\n\n")
+        print("Best model Test: ", best_model_test)
+        print(scores_txt_test)
+        print("\n\n")
+        print("Best model Validation: ", best_model_valid)
+        print(scores_txt_valid)
