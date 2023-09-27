@@ -246,3 +246,124 @@ def get_averaged_classification_report(classification_report_dicts, output_dict 
             report += row_fmt.format(*row, width=width, digits=digits)
     
     return report
+
+
+def load_model_results(results_path, condition, models, metric, weighted_metric = False):
+    results_df = pd.DataFrame()
+    settings_df = pd.DataFrame()
+
+    for model in models:
+        model_path = os.path.join(results_path, condition,"outputs_" + model)
+        model_settings = pd.DataFrame()
+        model_results = pd.DataFrame()
+        runs = []
+        for path, subdirs, files in os.walk(model_path):
+            output_identifier = os.path.basename(path)
+            if weighted_metric:
+                results_ = pd.DataFrame(columns = ["run", "Dataset", "F1", "recall", "precision", 
+                                                   "low_dlbcl_F1", "low_dlbcl_recall", "low_dlbcl_precision"]
+                                       )
+            for name in files:
+                file = os.path.join(path, name)
+                if file.endswith("settings.json"):
+                    with open(file) as f:
+                        settings = f.read()
+                        settings = settings.replace("\n", "").strip()
+                        settings = json.loads(settings)
+
+                        if len(model_settings) == 0:
+                            model_settings = pd.DataFrame(settings, index=[0])
+                        else:
+                            model_settings = pd.concat([model_settings,  pd.DataFrame(settings, index=[0])], ignore_index=True)
+                    runs.append(output_identifier)
+                if weighted_metric:
+                    if file.endswith("test_scores.txt"):
+                        row = [output_identifier, "Test"]
+                        with open(file) as f: 
+                            low_dlbcl = False
+                            for line in f.readlines():
+                                if "low dlbcl" in line:
+                                    low_dlbcl = True
+                                if "weighted avg" in line:
+                                    if low_dlbcl:
+                                        row.append(float(list(filter(None, line.split(" ")))[-2]))
+                                        row.append(float(list(filter(None, line.split(" ")))[-3]))
+                                        row.append(float(list(filter(None, line.split(" ")))[-4]))
+                                    else:
+                                        row.append(float(list(filter(None, line.split(" ")))[-2]))
+                                        row.append(float(list(filter(None, line.split(" ")))[-3]))
+                                        row.append(float(list(filter(None, line.split(" ")))[-4]))
+                        
+                        results_.loc[len(results_)] = row
+                    elif "valid_scores" in file:
+                        row = [output_identifier, "Validation"]
+                        with open(file) as f:
+                            low_dlbcl = False
+                            for line in f.readlines():
+                                if "low dlbcl" in line:
+                                    low_dlbcl = True
+                                if "weighted avg" in line:
+                                    if low_dlbcl:
+                                        row.append(float(list(filter(None, line.split(" ")))[-2]))
+                                        row.append(float(list(filter(None, line.split(" ")))[-3]))
+                                        row.append(float(list(filter(None, line.split(" ")))[-4]))
+                                    else:
+                                        row.append(float(list(filter(None, line.split(" ")))[-2]))
+                                        row.append(float(list(filter(None, line.split(" ")))[-3]))
+                                        row.append(float(list(filter(None, line.split(" ")))[-4]))
+                        
+                        results_.loc[len(results_)] = row
+                        
+
+                else:
+                    if file.endswith("performance.csv"):
+                        results_ = pd.read_csv(file)
+                        results_["run"] = output_identifier
+                        results_["F1"] = 2 * (results_.precision * results_.recall) / (results_.precision + results_.recall)
+                        results_["low_dlbcl_F1"] = 2 * (results_.low_dlbcl_precision * results_.low_dlbcl_recall) / (results_.low_dlbcl_precision + results_.low_dlbcl_recall)
+                        if len(model_results) == 0:
+                            model_results = results_
+                        else:
+                            model_results = pd.concat([model_results, results_], ignore_index = True)
+            if weighted_metric: 
+                model_results = pd.concat([model_results, results_], ignore_index = True)
+                
+        model_settings["run"] = runs
+        model_settings["model"] = model
+        if len(settings_df) == 0:
+            settings_df = model_settings
+            results_df = model_results
+        else:
+            results_df = pd.concat([results_df, model_results])
+            settings_df = pd.concat([settings_df, model_settings])
+    
+    df = pd.DataFrame(settings_df.values)
+    df.columns = settings_df.columns
+    
+    mean_validation_metric = []
+    test_metric = []
+    mean_validation_metric_low_dlbcl = []
+    test_metric_low_dlbcl = []
+    
+    for i,row in settings_df.iterrows():
+        run = row.run
+        sub_df = results_df[results_df.run == run]
+        if len(sub_df) == 0:
+            mean_validation_metric += [np.nan]
+            test_metric += [np.nan]
+            mean_validation_metric_low_dlbcl += [np.nan]
+            test_metric_low_dlbcl += [np.nan] 
+        else:
+            mean_validation_metric += [np.mean(sub_df[sub_df.Dataset == "Validation"][metric])]
+            test_metric += [sub_df[sub_df.Dataset == "Test"][metric].iloc[0]]
+            mean_validation_metric_low_dlbcl += [np.mean(sub_df[sub_df.Dataset == "Validation"]["low_dlbcl_" + metric])]
+            test_metric_low_dlbcl += [sub_df[sub_df.Dataset == "Test"]["low_dlbcl_" + metric].iloc[0]]
+    
+    
+    df["mean_validation_%s" % metric] = mean_validation_metric
+    df["test_%s" % metric] = test_metric
+    df["mean_validation_low_dlbcl_%s" % metric] = mean_validation_metric_low_dlbcl
+    df["test_low_dlbcl_%s" % metric] = test_metric_low_dlbcl
+    
+    
+    return df, results_df, settings_df
